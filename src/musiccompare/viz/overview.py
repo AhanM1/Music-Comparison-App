@@ -11,6 +11,7 @@ import numpy.typing as npt
 from matplotlib.figure import Figure
 
 from musiccompare.models import AudioClip
+from musiccompare.viz.style import REF_COLOR
 
 # A screen is ~2,000 pixels wide; plotting millions of samples is slow and
 # looks identical. We draw a min/max envelope with about this many points.
@@ -36,7 +37,7 @@ def waveform_envelope(
     return times, usable.min(axis=1), usable.max(axis=1)
 
 
-def plot_waveform(clip: AudioClip, color: str = "tab:blue") -> Figure:
+def plot_waveform(clip: AudioClip, color: str = REF_COLOR) -> Figure:
     """Plot a clip's waveform against time in seconds."""
     times, lower, upper = waveform_envelope(clip.y, clip.sr)
 

@@ -16,6 +16,17 @@ SAMPLE_RATE: Final = 22_050
 # 512 / 22,050 Hz ≈ 23 ms per frame.
 HOP_LENGTH: Final = 512
 
+# Window length for each analysis frame (samples). 2048 / 22,050 Hz ≈ 93 ms:
+# long enough to contain several cycles of the lowest note we track (C2 ≈ 65 Hz).
+FRAME_LENGTH: Final = 2048
+
+# --- Dynamics ------------------------------------------------------------
+# Quietest loudness we report. Anything below is treated as silence.
+SILENCE_DB: Final = -80.0
+
+# --- Tone ----------------------------------------------------------------
+N_MFCC: Final = 13
+
 # --- Pitch ---------------------------------------------------------------
 # Search range for the pitch tracker, as note names (librosa understands these).
 FMIN: Final = "C2"

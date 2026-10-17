@@ -4,8 +4,11 @@ import numpy as np
 from matplotlib.figure import Figure
 
 from musiccompare import config
+from musiccompare.features.extract import extract_features
 from musiccompare.models import AudioClip
+from musiccompare.viz.dynamics_plot import plot_loudness_contour
 from musiccompare.viz.overview import plot_waveform, waveform_envelope
+from musiccompare.viz.pitch_plot import plot_pitch_contour
 
 SR = config.SAMPLE_RATE
 
@@ -39,3 +42,24 @@ def test_plot_waveform_returns_labelled_figure(make_tone) -> None:
     ax = fig.axes[0]
     assert ax.get_title() == "my take"
     assert ax.get_xlim() == (0, 2.0)
+
+
+def test_pitch_contour_uses_note_names(make_tone) -> None:
+    clip = AudioClip(y=make_tone(440.0), sr=SR, name="a4")
+    features = extract_features(clip)
+
+    fig = plot_pitch_contour(features, title="pitch")
+
+    labels = [t.get_text() for t in fig.axes[0].get_yticklabels()]
+    assert "A4" in labels
+
+
+def test_loudness_contour_plots_db(make_tone) -> None:
+    clip = AudioClip(y=make_tone(amplitude=0.5), sr=SR, name="tone")
+    features = extract_features(clip)
+
+    fig = plot_loudness_contour(features, title="loud")
+
+    ax = fig.axes[0]
+    np.testing.assert_allclose(ax.lines[0].get_ydata(), features.rms_db)
+    assert ax.get_ylim()[1] == 0  # top of the axis is 0 dBFS
