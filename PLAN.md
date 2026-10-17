@@ -343,10 +343,17 @@ One place to tune means no "magic numbers" scattered through the code.
 | Streamlit reruns make analysis slow | `@st.cache_data` keyed on file hash |
 | Large uploads | Limit in `.streamlit/config.toml`; cap duration (e.g. 5 min) |
 
-**Questions for you:**
-1. Which instrument(s) do you play / want to target first? (Affects pitch range and feedback wording.)
-2. Will the reference usually be a professional recording, a teacher, or a previous take of yours?
-3. Public GitHub repo (portfolio + free CI) or private?
+**Decisions (answered):**
+1. **Instruments:** acoustic + electric guitar, and viola.
+   - Viola is mostly monophonic → best first target. Guitar single-note lines work; chords are polyphonic and break pYIN (v1 limitation).
+   - Ranges fit `FMIN = C2`: guitar low E2 ≈ 82 Hz, viola low C3 ≈ 131 Hz.
+   - Electric guitar distortion heavily changes tone features → tone feedback must account for amp settings.
+2. **References:** usually professional recordings. These often include accompaniment, reverb, and mastering,
+   which hurt reference-side pitch tracking. v1 works best with solo references; **source separation**
+   (isolating one instrument) is a candidate for Phase 8.
+3. **Repo:** private on GitHub; CI runs on GitHub Actions.
+4. **Environment:** project stays in OneDrive; venv lives at `C:\dev\venvs\music-comparison-app` via `UV_PROJECT_ENVIRONMENT`.
+5. **Formats:** librosa 1.0 decodes only via libsndfile (WAV/FLAC/OGG/MP3). M4A/AAC goes through an FFmpeg fallback.
 
 ---
 

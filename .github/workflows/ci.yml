@@ -22,6 +22,9 @@ jobs:
           python-version: "3.12"
           enable-cache: true
 
+      - name: Install FFmpeg (needed for the M4A loader test)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
       - name: Install dependencies (exactly as locked)
         # --locked fails if uv.lock is out of date with pyproject.toml
         run: uv sync --locked
