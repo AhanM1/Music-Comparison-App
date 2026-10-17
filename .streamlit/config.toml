@@ -1,0 +1,9 @@
+# Streamlit settings for this app. https://docs.streamlit.io/develop/api-reference/configuration/config.toml
+
+[server]
+# Max upload size per file, in MB. Five minutes of WAV is ~50 MB.
+maxUploadSize = 60
+
+[browser]
+# Don't send usage statistics to Streamlit.
+gatherUsageStats = false

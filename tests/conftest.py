@@ -4,11 +4,13 @@ pytest loads this file automatically. Any test can use a fixture below simply by
 naming it as a function parameter, e.g. ``def test_x(make_tone): ...``.
 """
 
+import io
 from collections.abc import Callable
 
 import numpy as np
 import numpy.typing as npt
 import pytest
+import soundfile as sf
 
 from musiccompare import config
 
@@ -33,6 +35,18 @@ def make_tone() -> ToneFactory:
         return (amplitude * np.sin(2 * np.pi * freq_hz * t)).astype(np.float32)
 
     return _make_tone
+
+
+@pytest.fixture
+def to_wav_bytes() -> Callable[..., bytes]:
+    """Return a function that encodes samples as WAV-file bytes (like an upload)."""
+
+    def _to_wav_bytes(y: npt.NDArray[np.float32], sr: int = config.SAMPLE_RATE) -> bytes:
+        buffer = io.BytesIO()
+        sf.write(buffer, y, sr, format="WAV")
+        return buffer.getvalue()
+
+    return _to_wav_bytes
 
 
 @pytest.fixture
