@@ -1,0 +1,39 @@
+# Continuous Integration: on every push / pull request, GitHub spins up a fresh
+# Linux machine, installs the project from uv.lock, and runs all checks.
+# A green check mark means "works on a clean machine", not just on mine.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v7
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies (exactly as locked)
+        # --locked fails if uv.lock is out of date with pyproject.toml
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Check formatting
+        run: uv run ruff format --check .
+
+      - name: Type check
+        run: uv run mypy
+
+      - name: Run tests with coverage
+        run: uv run pytest --cov=musiccompare --cov-report=term-missing

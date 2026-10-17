@@ -1,0 +1,9 @@
+# Store and check out text files with LF line endings on every OS, so diffs
+# never show "every line changed" just because someone used Windows vs Linux.
+* text=auto eol=lf
+
+# Binary files: never touch their bytes.
+*.wav binary
+*.mp3 binary
+*.flac binary
+*.png binary

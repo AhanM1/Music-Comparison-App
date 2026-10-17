@@ -1,0 +1,82 @@
+# =====================================================================
+# pyproject.toml — the single config file for this project.
+#   [project]        what the package is + what it needs at runtime
+#   [dependency-groups]  extra tools only developers need
+#   [build-system]   how to turn src/musiccompare into an installable package
+#   [tool.*]         settings for ruff, mypy, pytest
+# =====================================================================
+
+[project]
+name = "musiccompare"
+version = "0.1.0"
+description = "Compare a student's recording to a reference and give feedback on pitch, dynamics, and tone."
+readme = "README.md"
+authors = [{ name = "Ahan Maurya", email = "ahanmaurya56@gmail.com" }]
+requires-python = ">=3.12"
+dependencies = [
+    "librosa>=1.0.0",
+    "matplotlib>=3.11.2",
+    "numpy>=2.5.4",
+    "scipy>=1.18.1",
+    "soundfile>=0.14.0",
+    "streamlit>=1.66.0",
+]
+
+[dependency-groups]
+dev = [
+    "jupyter>=1.1.1",
+    "mypy>=2.4.0",
+    "pre-commit>=4.7.0",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.17.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.21,<0.13.0"]
+build-backend = "uv_build"
+
+# ---------------------------------------------------------------------
+# uv settings
+# ---------------------------------------------------------------------
+[tool.uv]
+# uv normally hardlinks files from its cache into the venv to save space.
+# On this OneDrive-managed Windows profile that fails ("incompatible hardlinks"),
+# so copy files instead. Slightly more disk use; otherwise identical.
+link-mode = "copy"
+
+# ---------------------------------------------------------------------
+# Ruff: linter (finds bugs/bad patterns) + formatter (consistent style)
+# ---------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests", "app"]
+
+[tool.ruff.lint]
+# Each letter code is a family of rules:
+#   E/W = pycodestyle (style)   F = pyflakes (real bugs, unused imports)
+#   I   = isort (import order)  B = bugbear (common gotchas)
+#   UP  = pyupgrade (modern syntax)  NPY = numpy-specific  SIM = simplifications
+select = ["E", "W", "F", "I", "B", "UP", "NPY", "SIM"]
+
+[tool.ruff.format]
+# Don't reformat code snippets inside Markdown docs (PLAN.md is hand-aligned).
+exclude = ["*.md"]
+
+# ---------------------------------------------------------------------
+# mypy: static type checker
+# ---------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+files = ["src"]
+strict = true
+# librosa/soundfile ship without type hints; don't fail because of them.
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------------
+# pytest: test runner
+# ---------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"

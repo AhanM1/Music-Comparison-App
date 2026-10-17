@@ -1,0 +1,44 @@
+# --- Python bytecode & caches ---
+__pycache__/
+*.py[cod]
+
+# --- Virtual environments (ours lives outside the repo, but just in case) ---
+.venv/
+venv/
+
+# --- Build / packaging output ---
+build/
+dist/
+*.egg-info/
+
+# --- Tool caches ---
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- Secrets & local config ---
+.env
+.streamlit/secrets.toml
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Audio & app data ---
+# Recordings can be large and personal, so they stay out of git by default.
+# Small demo clips in sample_audio/ can be force-added with `git add -f`.
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.ogg
+# Leading "/" = only the top-level data/ folder (not src/musiccompare/data/).
+/data/

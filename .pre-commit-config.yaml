@@ -1,0 +1,38 @@
+# pre-commit runs these checks every time you `git commit`.
+# If any hook fails (or auto-fixes a file), the commit is stopped so you can
+# review the change, `git add` it, and commit again.
+#
+# One-time setup:   uv run pre-commit install
+# Run on all files: uv run pre-commit run --all-files
+#
+# "local" hooks call the tools through `uv run`, so they use the exact versions
+# pinned in uv.lock. There is only one place where tool versions are defined.
+
+repos:
+  - repo: local
+    hooks:
+      - id: uv-lock
+        name: uv.lock is up to date with pyproject.toml
+        entry: uv lock --check
+        language: system
+        files: ^(pyproject\.toml|uv\.lock)$
+        pass_filenames: false
+
+      - id: ruff-check
+        name: ruff (lint, auto-fix)
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+
+      - id: ruff-format
+        name: ruff (format)
+        entry: uv run ruff format
+        language: system
+        types: [python]
+
+      - id: mypy
+        name: mypy (type check src/)
+        entry: uv run mypy
+        language: system
+        types: [python]
+        pass_filenames: false
