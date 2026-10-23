@@ -56,7 +56,25 @@ ALIGNMENT_COST_WARNING: Final = 0.35
 FMIN: Final = "C2"
 FMAX: Final = "C7"
 
-# --- Comparison thresholds -----------------------------------------------
+# --- Comparison ----------------------------------------------------------
+# Frames quieter than this count as silence when comparing loudness and tone.
+SOUNDING_DB: Final = -50.0
+
+# Width (s) of the median filter applied to every difference curve before
+# scoring. Longer than one vibrato cycle (~0.2 s at 5 Hz), so two players whose
+# vibratos wobble out of step aren't marked out of tune, and long enough to
+# ignore the 1-2 frame glitches alignment leaves where notes change.
+COMPARISON_SMOOTHING_S: Final = 0.25
+
+# Differences within these tolerances count as perfect...
 PITCH_TOLERANCE_CENTS: Final = 15.0  # 100 cents = 1 semitone
 DYNAMICS_TOLERANCE_DB: Final = 4.0
+TONE_TOLERANCE_OCTAVES: Final = 0.25  # brightness: 0.25 octave ≈ 19% brighter/darker
+
+# ...and differences this large (or larger) score 0, with a straight line between.
+PITCH_ZERO_SCORE_CENTS: Final = 50.0  # a quarter-tone: clearly out of tune
+DYNAMICS_ZERO_SCORE_DB: Final = 12.0  # roughly two dynamic levels (e.g. mf vs pp)
+TONE_ZERO_SCORE_OCTAVES: Final = 1.0  # spectral centroid doubled or halved
+
 MIN_REGION_SECONDS: Final = 0.25  # ignore problem regions shorter than this
+REGION_MERGE_GAP_S: Final = 0.2  # join same-direction problems closer than this

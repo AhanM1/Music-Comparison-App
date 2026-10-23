@@ -9,6 +9,7 @@ first needs them; see PLAN.md section 2.4.
 """
 
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -106,3 +107,65 @@ class Alignment:
     @property
     def user_frames(self) -> IntArray:
         return self.path[:, 1]
+
+
+# The three things we compare. A Literal type means mypy rejects typos like "pich".
+Dimension = Literal["pitch", "dynamics", "tone"]
+DIMENSIONS: tuple[Dimension, ...] = ("pitch", "dynamics", "tone")
+
+
+@dataclass(frozen=True)
+class FrameDifferences:
+    """How the user differs from the reference, at every frame of the reference.
+
+    Positive = the user is sharp / louder / brighter; negative = flat / quieter /
+    darker. NaN = nothing to compare at that moment (a rest, or no clear pitch).
+    """
+
+    times: FloatArray  # reference timeline (s)
+    pitch_cents: FloatArray  # pitch difference, whole octaves removed
+    dynamics_db: FloatArray  # loudness-contour difference, overall level offset removed
+    tone_octaves: FloatArray  # brightness (spectral centroid) difference in octaves
+    level_offset_db: float  # how much louder the user was overall (removed from dynamics_db)
+    octave_shift: int  # whole octaves the user played above the reference (removed from tone)
+
+    def __post_init__(self) -> None:
+        n = len(self.times)
+        for name in ("pitch_cents", "dynamics_db", "tone_octaves"):
+            if len(getattr(self, name)) != n:
+                raise ValueError(f"{name} has {len(getattr(self, name))} frames, expected {n}")
+
+    def errors(self, dimension: Dimension) -> FloatArray:
+        """The difference curve for one dimension."""
+        return {
+            "pitch": self.pitch_cents,
+            "dynamics": self.dynamics_db,
+            "tone": self.tone_octaves,
+        }[dimension]
+
+
+@dataclass(frozen=True)
+class ProblemRegion:
+    """A stretch of time where one dimension was consistently off in one direction."""
+
+    dimension: Dimension
+    start_s: float  # on the reference's timeline
+    end_s: float
+    user_start_s: float  # the same stretch on the user's timeline
+    user_end_s: float
+    mean_error: float  # signed, in cents / dB / octaves (see FrameDifferences)
+    severity: float  # 0 = just past the tolerance ... 1 = far past it
+
+    @property
+    def duration_s(self) -> float:
+        return self.end_s - self.start_s
+
+
+@dataclass(frozen=True)
+class ComparisonResult:
+    """Everything Phase 4 learns from comparing two aligned recordings."""
+
+    alignment: Alignment
+    differences: FrameDifferences
+    scores: dict[Dimension, float | None]  # 0-100 per dimension; None = nothing to compare
+    regions: list[ProblemRegion]  # sorted by start time

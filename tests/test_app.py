@@ -52,6 +52,29 @@ def test_app_compares_two_takes_of_the_same_melody(app: AppTest, make_melody, to
     assert not app.warning  # same tune: no "different music" warning
     captions = " ".join(c.value for c in app.caption)
     assert "+25% length" in captions  # 0.5 s notes vs 0.4 s
+    # Only the tempo differs, so every score is perfect and nothing is flagged.
+    assert {m.label: m.value for m in app.metric} == {
+        "Pitch": "100/100",
+        "Dynamics": "100/100",
+        "Tone": "100/100",
+    }
+    assert "No problem spots" in app.success[0].value
+
+
+def test_app_lists_a_sharp_passage(app: AppTest, make_melody, to_wav_bytes) -> None:
+    notes = [60, 64, 67, 72, 71, 67, 65, 69, 74, 72]
+    sharp = [0, 0, 0, 0, 35, 35, 35, 35, 0, 0]  # notes 5-8 (1.6 s - 3.2 s) 35 cents sharp
+    app.run()
+    app.file_uploader(key="ref").upload("ref.wav", to_wav_bytes(make_melody(notes)), "audio/wav")
+    user = make_melody(notes, cents=sharp)
+    app.file_uploader(key="user").upload("me.wav", to_wav_bytes(user), "audio/wav")
+    app.run()
+
+    assert not app.exception
+    [row] = app.dataframe[0].value.to_dict("records")
+    assert row["What"] == "Pitch"
+    assert row["How far off"] == "35 cents sharp"
+    assert row["Reference time"] == "0:01.6 – 0:03.2"
 
 
 def test_app_warns_when_pieces_differ(app: AppTest, make_melody, to_wav_bytes) -> None:

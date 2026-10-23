@@ -45,6 +45,8 @@ def make_melody() -> Callable[..., npt.NDArray[np.float32]]:
     and a short attack/release so note boundaries are audible. Every property can
     be set per note, so tests can make a "student" version that is out of tune
     (``cents``), uneven in loudness (``amplitudes``), or rushed (``durations``).
+    ``vibrato_cents`` > 0 adds vibrato: the pitch wobbles ± that many cents,
+    ``vibrato_hz`` times per second, as string players do.
     """
 
     def _make_melody(
@@ -53,6 +55,8 @@ def make_melody() -> Callable[..., npt.NDArray[np.float32]]:
         cents: float | list[float] = 0.0,
         amplitudes: float | list[float] = 0.5,
         overtones: tuple[float, ...] = (1.0, 0.5, 0.3, 0.2),
+        vibrato_cents: float = 0.0,
+        vibrato_hz: float = 5.5,
         sr: int = config.SAMPLE_RATE,
     ) -> npt.NDArray[np.float32]:
         n = len(midi_notes)
@@ -63,7 +67,10 @@ def make_melody() -> Callable[..., npt.NDArray[np.float32]]:
         for midi, dur, off, amp in zip(midi_notes, durs, offs, amps, strict=True):
             t = np.arange(int(dur * sr)) / sr
             f0 = 440.0 * 2 ** ((midi - 69) / 12 + off / 1200)
-            tone = sum(a * np.sin(2 * np.pi * f0 * (h + 1) * t) for h, a in enumerate(overtones))
+            # Phase = 2π x (running total of the frequency); with no vibrato it's 2π f0 t.
+            wobble = 2 ** (vibrato_cents * np.sin(2 * np.pi * vibrato_hz * t) / 1200)
+            phase = 2 * np.pi * f0 * (np.cumsum(wobble) / sr if vibrato_cents else t)
+            tone = sum(a * np.sin(phase * (h + 1)) for h, a in enumerate(overtones))
             envelope = np.minimum(1, t / 0.02) * np.minimum(1, (dur - t) / 0.03)
             notes.append(amp * tone * envelope / sum(overtones))
         return np.concatenate(notes).astype(np.float32)
