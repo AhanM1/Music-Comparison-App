@@ -25,4 +25,7 @@ def extract_rms_db(clip: AudioClip) -> npt.NDArray[np.float32]:
     )[0]  # rms() returns shape (1, n_frames); take the single row
     amin = 10 ** (config.SILENCE_DB / 20)  # the amplitude that equals SILENCE_DB
     db = librosa.amplitude_to_db(rms, ref=1.0, amin=amin, top_db=None)
-    return np.asarray(db, dtype=np.float32)
+    # amplitude_to_db works in float32, where log10(amin) can round to a hair
+    # below the floor (-80.0000076 on Linux, exactly -80.0 on Windows); clamp so
+    # the floor is exact on every machine.
+    return np.maximum(np.asarray(db, dtype=np.float32), np.float32(config.SILENCE_DB))
