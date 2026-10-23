@@ -38,6 +38,40 @@ def make_tone() -> ToneFactory:
 
 
 @pytest.fixture
+def make_melody() -> Callable[..., npt.NDArray[np.float32]]:
+    """Return a function that synthesizes a melody of instrument-like notes.
+
+    Each note has a fundamental plus overtones (like a bowed or plucked string)
+    and a short attack/release so note boundaries are audible. Every property can
+    be set per note, so tests can make a "student" version that is out of tune
+    (``cents``), uneven in loudness (``amplitudes``), or rushed (``durations``).
+    """
+
+    def _make_melody(
+        midi_notes: list[float],
+        durations: float | list[float] = 0.4,
+        cents: float | list[float] = 0.0,
+        amplitudes: float | list[float] = 0.5,
+        overtones: tuple[float, ...] = (1.0, 0.5, 0.3, 0.2),
+        sr: int = config.SAMPLE_RATE,
+    ) -> npt.NDArray[np.float32]:
+        n = len(midi_notes)
+        durs = np.broadcast_to(durations, n)
+        offs = np.broadcast_to(cents, n)
+        amps = np.broadcast_to(amplitudes, n)
+        notes = []
+        for midi, dur, off, amp in zip(midi_notes, durs, offs, amps, strict=True):
+            t = np.arange(int(dur * sr)) / sr
+            f0 = 440.0 * 2 ** ((midi - 69) / 12 + off / 1200)
+            tone = sum(a * np.sin(2 * np.pi * f0 * (h + 1) * t) for h, a in enumerate(overtones))
+            envelope = np.minimum(1, t / 0.02) * np.minimum(1, (dur - t) / 0.03)
+            notes.append(amp * tone * envelope / sum(overtones))
+        return np.concatenate(notes).astype(np.float32)
+
+    return _make_melody
+
+
+@pytest.fixture
 def to_wav_bytes() -> Callable[..., bytes]:
     """Return a function that encodes samples as WAV-file bytes (like an upload)."""
 

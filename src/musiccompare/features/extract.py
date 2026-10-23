@@ -3,6 +3,7 @@
 import librosa
 
 from musiccompare import config
+from musiccompare.features.chroma import extract_chroma
 from musiccompare.features.dynamics import extract_rms_db
 from musiccompare.features.pitch import extract_pitch
 from musiccompare.features.tone import extract_tone
@@ -14,10 +15,11 @@ EXTRACTOR_VERSION = "1"
 
 
 def extract_features(clip: AudioClip) -> FeatureSet:
-    """Compute pitch, dynamics, and tone features for every frame of ``clip``."""
+    """Compute pitch, dynamics, tone, and chroma features for every frame of ``clip``."""
     f0_hz, voiced_prob = extract_pitch(clip)
     rms_db = extract_rms_db(clip)
     centroid_hz, flatness, mfcc = extract_tone(clip)
+    chroma = extract_chroma(clip, rms_db)
 
     times = librosa.times_like(f0_hz, sr=clip.sr, hop_length=config.HOP_LENGTH)
     return FeatureSet(
@@ -28,5 +30,6 @@ def extract_features(clip: AudioClip) -> FeatureSet:
         centroid_hz=centroid_hz,
         flatness=flatness,
         mfcc=mfcc,
+        chroma=chroma,
         extractor_version=EXTRACTOR_VERSION,
     )

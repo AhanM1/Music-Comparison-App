@@ -16,6 +16,7 @@ def make_feature_set(n: int = 10, **overrides: object) -> FeatureSet:
         "centroid_hz": np.full(n, 1000.0),
         "flatness": np.zeros(n),
         "mfcc": np.zeros((13, n)),
+        "chroma": np.full((12, n), 1 / np.sqrt(12)),
         "extractor_version": "test",
     }
     fields.update(overrides)

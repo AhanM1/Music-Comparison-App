@@ -39,6 +39,33 @@ def test_app_shows_both_recordings(app: AppTest, make_tone, to_wav_bytes) -> Non
     assert "You: 1.0 s" in captions
 
 
+def test_app_compares_two_takes_of_the_same_melody(app: AppTest, make_melody, to_wav_bytes) -> None:
+    notes = [60, 62, 64, 65, 67]
+    app.run()
+    app.file_uploader(key="ref").upload("ref.wav", to_wav_bytes(make_melody(notes)), "audio/wav")
+    slower = make_melody(notes, durations=0.5)
+    app.file_uploader(key="user").upload("me.wav", to_wav_bytes(slower), "audio/wav")
+    app.run()
+
+    assert not app.exception
+    assert any(h.value == "Comparison" for h in app.header)
+    assert not app.warning  # same tune: no "different music" warning
+    captions = " ".join(c.value for c in app.caption)
+    assert "+25% length" in captions  # 0.5 s notes vs 0.4 s
+
+
+def test_app_warns_when_pieces_differ(app: AppTest, make_melody, to_wav_bytes) -> None:
+    app.run()
+    ref = make_melody([60, 64, 67, 72, 67, 64])
+    other = make_melody([61, 70, 63, 66, 59, 68])
+    app.file_uploader(key="ref").upload("ref.wav", to_wav_bytes(ref), "audio/wav")
+    app.file_uploader(key="user").upload("other.wav", to_wav_bytes(other), "audio/wav")
+    app.run()
+
+    assert not app.exception
+    assert "same music" in app.warning[0].value
+
+
 def test_app_reports_unreadable_upload(app: AppTest) -> None:
     app.run()
     app.file_uploader(key="ref").upload("broken.wav", b"not audio at all", "audio/wav")

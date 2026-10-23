@@ -4,8 +4,10 @@ import numpy as np
 from matplotlib.figure import Figure
 
 from musiccompare import config
+from musiccompare.analysis.alignment import align
 from musiccompare.features.extract import extract_features
 from musiccompare.models import AudioClip
+from musiccompare.viz.alignment_plot import plot_aligned_pitch, plot_alignment_path
 from musiccompare.viz.dynamics_plot import plot_loudness_contour
 from musiccompare.viz.overview import plot_waveform, waveform_envelope
 from musiccompare.viz.pitch_plot import plot_pitch_contour
@@ -63,3 +65,33 @@ def test_loudness_contour_plots_db(make_tone) -> None:
     ax = fig.axes[0]
     np.testing.assert_allclose(ax.lines[0].get_ydata(), features.rms_db)
     assert ax.get_ylim()[1] == 0  # top of the axis is 0 dBFS
+
+
+def test_alignment_path_plot_spans_both_recordings(make_melody) -> None:
+    ref = extract_features(AudioClip(y=make_melody([60, 64, 67]), sr=SR, name="ref"))
+    user = extract_features(AudioClip(y=make_melody([60, 64, 67], durations=0.6), sr=SR, name="me"))
+    alignment = align(ref, user)
+
+    fig = plot_alignment_path(ref, user, alignment)
+
+    ax = fig.axes[0]
+    path_x, path_y = ax.lines[0].get_data()
+    assert path_x[-1] == ref.times[-1]  # the path runs corner to corner...
+    assert path_y[-1] == user.times[-1]
+    assert ax.images[0].get_extent()[1:4:2] == [ref.times[-1], user.times[-1]]  # ...of the grid
+
+
+def test_aligned_pitch_puts_user_on_reference_timeline(make_melody) -> None:
+    ref = extract_features(AudioClip(y=make_melody([60, 64, 67]), sr=SR, name="ref"))
+    user = extract_features(AudioClip(y=make_melody([60, 64, 67], durations=0.6), sr=SR, name="me"))
+    alignment = align(ref, user)
+
+    fig = plot_aligned_pitch(ref, user, alignment)
+
+    ref_line, user_line = fig.axes[0].lines
+    # The user's (longer) take is squeezed onto the reference's time axis.
+    np.testing.assert_array_equal(user_line.get_xdata(), ref.times)
+    # Same notes in both, so once aligned the two lines mostly agree.
+    both = np.isfinite(ref_line.get_ydata()) & np.isfinite(user_line.get_ydata())
+    agree = np.abs(ref_line.get_ydata()[both] - user_line.get_ydata()[both]) < 0.5
+    assert agree.mean() > 0.9

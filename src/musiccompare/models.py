@@ -58,6 +58,7 @@ class FeatureSet:
     centroid_hz: FloatArray  # spectral centroid: "brightness"
     flatness: FloatArray  # spectral flatness 0..1: tone-like (0) vs noise-like (1)
     mfcc: FloatArray  # timbre fingerprint, shape (n_mfcc, n_frames)
+    chroma: FloatArray  # pitch-class profile (C, C#, ... B), shape (12, n_frames)
     extractor_version: str  # bump when feature code changes, so stored data stays consistent
 
     def __post_init__(self) -> None:
@@ -68,7 +69,40 @@ class FeatureSet:
                 raise ValueError(f"{field_name} has {length} frames, expected {n}")
         if self.mfcc.ndim != 2 or self.mfcc.shape[1] != n:
             raise ValueError(f"mfcc must have shape (n_mfcc, {n}), got {self.mfcc.shape}")
+        if self.chroma.shape != (12, n):
+            raise ValueError(f"chroma must have shape (12, {n}), got {self.chroma.shape}")
 
     @property
     def n_frames(self) -> int:
         return len(self.times)
+
+
+IntArray = npt.NDArray[np.intp]
+
+
+@dataclass(frozen=True)
+class Alignment:
+    """How the user's recording lines up in time with the reference.
+
+    ``path[i] = (ref_frame, user_frame)``: at reference frame ``ref_frame`` the
+    user was at ``user_frame``. There is exactly one row per reference frame, in
+    order, so ``path[:, 1]`` maps the reference timeline onto the user's.
+    """
+
+    path: IntArray  # shape (n_ref_frames, 2)
+    cost: float  # mean chroma distance along the path: 0 = identical, ~1 = unrelated
+    resolution: int  # DTW ran on frames averaged in groups of this size (1 = full)
+
+    def __post_init__(self) -> None:
+        if self.path.ndim != 2 or self.path.shape[1] != 2:
+            raise ValueError(f"path must have shape (n, 2), got {self.path.shape}")
+        if np.any(np.diff(self.path, axis=0) < 0):
+            raise ValueError("path must never go backwards in time")
+
+    @property
+    def ref_frames(self) -> IntArray:
+        return self.path[:, 0]
+
+    @property
+    def user_frames(self) -> IntArray:
+        return self.path[:, 1]
