@@ -75,6 +75,30 @@ def test_app_lists_a_sharp_passage(app: AppTest, make_melody, to_wav_bytes) -> N
     assert row["What"] == "Pitch"
     assert row["How far off"] == "35 cents sharp"
     assert row["Reference time"] == "0:01.6 – 0:03.2"
+    # The comparison charts are drawn: timeline + 5 tabs + 2x3 per-recording plots.
+    assert len(app.get("image")) == 1 + 5 + 6
+    # Two full players + one snippet player per recording.
+    assert len(app.get("audio")) == 4
+    assert app.selectbox(key="snippet").value.dimension == "pitch"
+
+
+def test_app_plays_the_selected_problem_spot(app: AppTest, make_melody, to_wav_bytes) -> None:
+    notes = [60, 64, 67, 72, 71, 67, 65, 69, 74, 72]
+    cents = [0, 40, 40, 0, 0, 0, 0, -40, -40, 0]  # sharp at 0.4-1.2 s, flat at 2.8-3.6 s
+    app.run()
+    app.file_uploader(key="ref").upload("ref.wav", to_wav_bytes(make_melody(notes)), "audio/wav")
+    user = make_melody(notes, cents=cents)
+    app.file_uploader(key="user").upload("me.wav", to_wav_bytes(user), "audio/wav")
+    app.run()
+
+    def snippet_times() -> list[str]:
+        return [m.value for m in app.markdown if m.value.startswith(("**Reference**", "**You**"))]
+
+    assert snippet_times()[0] == "**Reference** (0:00.4 – 0:01.2)"
+    app.selectbox(key="snippet").select_index(1).run()
+
+    assert not app.exception
+    assert snippet_times()[0] == "**Reference** (0:02.8 – 0:03.6)"
 
 
 def test_app_warns_when_pieces_differ(app: AppTest, make_melody, to_wav_bytes) -> None:

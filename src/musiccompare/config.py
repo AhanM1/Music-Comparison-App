@@ -78,3 +78,8 @@ TONE_ZERO_SCORE_OCTAVES: Final = 1.0  # spectral centroid doubled or halved
 
 MIN_REGION_SECONDS: Final = 0.25  # ignore problem regions shorter than this
 REGION_MERGE_GAP_S: Final = 0.2  # join same-direction problems closer than this
+
+# --- Playback --------------------------------------------------------------
+# Extra audio (s) played before and after a problem spot, so your ear hears
+# it in context instead of starting mid-note.
+SNIPPET_PAD_S: Final = 0.5
