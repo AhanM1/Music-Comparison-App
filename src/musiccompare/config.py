@@ -34,6 +34,14 @@ SILENCE_DB: Final = -80.0
 # --- Tone ----------------------------------------------------------------
 N_MFCC: Final = 13
 
+# Background-noise removal for brightness (see features/tone.py). At each
+# frequency, this percentile of its level over time estimates the noise, and
+# anything under NOISE_FLOOR_MARGIN times that is ignored. For white noise the
+# 25th percentile is ~0.76x its typical level, so a margin of 4 removes
+# ~99% of noise-only values while notes, far louder, are kept.
+NOISE_FLOOR_PERCENTILE: Final = 25.0
+NOISE_FLOOR_MARGIN: Final = 4.0
+
 # --- Alignment -----------------------------------------------------------
 # Frames quieter than this get a neutral chroma vector, so background noise in
 # rests isn't mistaken for notes.

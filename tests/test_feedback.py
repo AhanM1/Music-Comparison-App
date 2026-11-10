@@ -17,6 +17,7 @@ from musiccompare.feedback.rules import (
     SOURCE,
     SPOT_TIPS,
     RuleBasedFeedback,
+    explained_by_noise,
     explains_spots,
     family,
     importance,
@@ -265,15 +266,22 @@ def test_wider_dynamics_than_a_reference_are_trusted_less(make_melody) -> None:
     assert habit.confidence == config.DYNAMICS_WIDER_CONFIDENCE
 
 
-def test_noisy_tone_replaces_the_brighter_spot_it_causes(make_melody) -> None:
+def test_noisy_tone_is_one_noise_tip_not_a_brighter_spot(make_melody) -> None:
+    """Hiss used to also read as "much brighter"; brightness now ignores steady noise."""
     items = feedback(make_melody(TUNE), with_noise(make_melody(TUNE), snr_db=15))
 
     (item,) = items  # no separate "you were brighter" spot
     assert item.dimension == "tone" and item.region is None
     assert item.message.startswith("Your sound has more noise in it")
-    assert "brighter spot" in item.message
     assert "quiet" in item.tip  # warns that the room/mic could be the cause
     assert item.confidence == config.NOISE_CONFIDENCE
+
+
+def test_noise_explains_brighter_spots_it_causes() -> None:
+    """Noise that does come and go (e.g. scratchy bowing) can still measure as brighter."""
+    assert explained_by_noise(region("tone", 0.5))
+    assert not explained_by_noise(region("tone", -0.5))  # darker isn't caused by noise
+    assert not explained_by_noise(region("pitch", 30.0))
 
 
 @pytest.mark.parametrize(

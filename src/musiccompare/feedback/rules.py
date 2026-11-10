@@ -420,7 +420,9 @@ def noisy_tone_habit(
         message="Your sound has more noise in it than the reference's (scratch, hiss, or buzz)."
         + explains_spots(sum(map(explained_by_noise, result.regions)), "brighter"),
         tip=tip,
-        importance=importance("tone", severity(gap, config.NOISE_TOLERANCE_DB), share),
+        # Half the tolerance as the scale: flatness gaps are in dB, so a gap just
+        # past the 10 dB tolerance (already 10x noisier) still matters.
+        importance=importance("tone", severity(gap, config.NOISE_TOLERANCE_DB / 2), share),
         confidence=trust,
         source=SOURCE,
     )

@@ -11,7 +11,8 @@ from musiccompare.models import AudioClip, FeatureSet
 
 # Bump this whenever a change to feature code would change the numbers produced.
 # Stored sessions record it, so ML training never mixes incompatible features.
-EXTRACTOR_VERSION = "1"
+# v2: brightness (spectral centroid) ignores the steady background noise.
+EXTRACTOR_VERSION = "2"
 
 
 def extract_features(clip: AudioClip) -> FeatureSet:

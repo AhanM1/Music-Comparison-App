@@ -11,7 +11,7 @@ from musiccompare import config
 from musiccompare.features.dynamics import extract_rms_db
 from musiccompare.features.extract import EXTRACTOR_VERSION, extract_features
 from musiccompare.features.pitch import extract_pitch, fold_octaves, hz_to_cents, refine_f0
-from musiccompare.features.tone import extract_tone
+from musiccompare.features.tone import extract_tone, remove_noise_floor
 from musiccompare.models import AudioClip
 
 SR = config.SAMPLE_RATE
@@ -155,6 +155,50 @@ def test_overtones_make_tone_brighter(make_tone) -> None:
     rich_centroid, _, _ = extract_tone(clip_of(rich.astype(np.float32)))
 
     assert np.median(rich_centroid) > 1.5 * np.median(pure_centroid)
+
+
+def harmonic_note(make_tone, f0: float = 220.0, duration_s: float = 3.0) -> np.ndarray:
+    """A viola-like note: a fundamental plus fading overtones."""
+    return sum(  # type: ignore[return-value]
+        make_tone(f0 * (h + 1), duration_s=duration_s, amplitude=0.4 * a)
+        for h, a in enumerate((1.0, 0.5, 0.3, 0.2))
+    )
+
+
+@pytest.mark.parametrize("noise_level", [0.003, 0.01, 0.02])
+def test_background_hiss_barely_changes_brightness(make_tone, noise_level: float) -> None:
+    """Hiss from a cheap mic used to read as "184% brighter" (QA report M1)."""
+    clean = harmonic_note(make_tone)
+    hiss = noise_level * np.random.default_rng(0).standard_normal(clean.size)
+
+    clean_centroid, _, _ = extract_tone(clip_of(clean.astype(np.float32)))
+    noisy_centroid, _, _ = extract_tone(clip_of((clean + hiss).astype(np.float32)))
+
+    change_octaves = np.log2(np.nanmedian(noisy_centroid) / np.nanmedian(clean_centroid))
+    assert abs(change_octaves) < 0.1  # under 7%: far inside the 0.25-octave tolerance
+
+
+def test_a_note_held_throughout_is_not_mistaken_for_noise(make_tone) -> None:
+    """The noise floor is what's *always* there; a long tone is too, but it must survive."""
+    centroid, _, _ = extract_tone(clip_of(harmonic_note(make_tone).astype(np.float32)))
+
+    assert not np.isnan(centroid).any()
+    assert np.median(centroid) == pytest.approx(
+        (220 * 1 + 440 * 0.5 + 660 * 0.3 + 880 * 0.2) / 2.0, rel=0.1
+    )  # the amplitude-weighted mean of the harmonics
+
+
+def test_remove_noise_floor_keeps_peaks_and_drops_noise() -> None:
+    rng = np.random.default_rng(1)
+    # FFT values of noise are complex Gaussian, so their magnitudes follow a
+    # Rayleigh distribution; build the same thing directly.
+    spectrum = np.abs(rng.standard_normal((1025, 200)) + 1j * rng.standard_normal((1025, 200)))
+    spectrum[100, 50:150] += 50.0  # one note, sounding half the time
+    clean = remove_noise_floor(spectrum)
+
+    assert clean[100, 50:150].min() > 40  # the note survives almost untouched
+    noise_only = np.delete(clean, 100, axis=0)
+    assert (noise_only > 0).mean() < 0.02  # ~all of the noise is gone
 
 
 def test_noise_is_flatter_than_a_tone(make_tone) -> None:
