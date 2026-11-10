@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from musiccompare import config
+from musiccompare.data.store import SessionStore
 from musiccompare.feedback.rules import SPOT_TIPS
 
 # Build the path from this file's location so tests work from any directory.
@@ -16,9 +18,26 @@ APP = str(Path(__file__).parents[1] / "app" / "streamlit_app.py")
 TIMEOUT_S = 120  # first run imports librosa/numba, which is slow
 
 
+@pytest.fixture(autouse=True)
+def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Every app test saves its history into a throwaway folder, never ./data."""
+    monkeypatch.setenv(config.DATA_DIR_ENV, str(tmp_path))
+    return tmp_path
+
+
 @pytest.fixture
 def app() -> AppTest:
     return AppTest.from_file(APP, default_timeout=TIMEOUT_S)
+
+
+def upload_sharp_take(app: AppTest, make_melody, to_wav_bytes) -> None:
+    """Upload a reference and a take with notes 5-8 (1.6 s - 3.2 s) 35 cents sharp."""
+    notes = [60, 64, 67, 72, 71, 67, 65, 69, 74, 72]
+    sharp = [0, 0, 0, 0, 35, 35, 35, 35, 0, 0]
+    app.file_uploader(key="ref").upload("ref.wav", to_wav_bytes(make_melody(notes)), "audio/wav")
+    user = make_melody(notes, cents=sharp)
+    app.file_uploader(key="user").upload("me.wav", to_wav_bytes(user), "audio/wav")
+    app.run()
 
 
 def test_app_starts_and_asks_for_uploads(app: AppTest) -> None:
@@ -164,3 +183,93 @@ def test_app_reports_unreadable_upload(app: AppTest) -> None:
 
     assert not app.exception  # handled gracefully...
     assert "broken.wav" in app.error[0].value  # ...with a message naming the file
+
+
+# --- Practice history (Phase 7) ----------------------------------------------
+
+
+def test_app_saves_the_session_once(
+    app: AppTest, make_melody, to_wav_bytes, data_dir: Path
+) -> None:
+    app.run()
+    upload_sharp_take(app, make_melody, to_wav_bytes)
+    app.run()  # a rerun (any click) must not save the take a second time
+
+    assert not app.exception
+    [session] = SessionStore(data_dir).history()
+    assert session.instrument == "viola"
+    assert session.n_tips == len(app.feedback) > 0
+    assert not session.audio_saved
+
+
+def test_app_stores_tip_ratings(app: AppTest, make_melody, to_wav_bytes, data_dir: Path) -> None:
+    app.run()
+    upload_sharp_take(app, make_melody, to_wav_bytes)
+    store = SessionStore(data_dir)
+    [session] = store.history()
+
+    app.feedback[0].set_value(1).run()  # 👍
+    assert not app.exception
+    assert store.ratings(session.id) == {0: 1}
+
+    app.feedback[0].set_value(0).run()  # changed to 👎
+    assert store.ratings(session.id) == {0: -1}
+
+
+def test_app_shows_earlier_ratings_again(make_melody, to_wav_bytes, data_dir: Path) -> None:
+    first = AppTest.from_file(APP, default_timeout=TIMEOUT_S)
+    first.run()
+    upload_sharp_take(first, make_melody, to_wav_bytes)
+    first.feedback[0].set_value(1).run()
+
+    # A fresh browser session with the same take: the 👍 is still there.
+    later = AppTest.from_file(APP, default_timeout=TIMEOUT_S)
+    later.run()
+    upload_sharp_take(later, make_melody, to_wav_bytes)
+
+    assert not later.exception
+    assert later.feedback[0].value == 1
+    assert len(SessionStore(data_dir).history()) == 1
+
+
+def test_app_saves_nothing_when_history_is_off(
+    app: AppTest, make_melody, to_wav_bytes, data_dir: Path
+) -> None:
+    app.run()
+    app.toggle(key="save_history").set_value(False)
+    upload_sharp_take(app, make_melody, to_wav_bytes)
+
+    assert not app.exception
+    assert app.checkbox(key="keep_audio").disabled
+    assert not app.feedback  # nothing to rate without a saved session
+    assert any("35 cents sharp" in m.value for m in app.markdown)  # advice still shown
+    assert not (data_dir / "sessions.db").exists()
+
+
+def test_app_keeps_recordings_only_when_asked(
+    app: AppTest, make_melody, to_wav_bytes, data_dir: Path
+) -> None:
+    app.run()
+    app.checkbox(key="keep_audio").check()
+    upload_sharp_take(app, make_melody, to_wav_bytes)
+
+    assert not app.exception
+    store = SessionStore(data_dir)
+    [session] = store.history()
+    assert session.audio_saved
+    assert store.audio_paths(session.id) is not None
+
+
+def test_app_still_works_when_history_cant_be_saved(
+    app: AppTest, make_melody, to_wav_bytes, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    blocker = tmp_path / "not-a-folder"
+    blocker.write_text("a file where the data folder should be")
+    monkeypatch.setenv(config.DATA_DIR_ENV, str(blocker))
+    app.run()
+    upload_sharp_take(app, make_melody, to_wav_bytes)
+
+    assert not app.exception
+    assert any("history can't be opened" in w.value for w in app.warning)
+    assert any("35 cents sharp" in m.value for m in app.markdown)
+    assert not app.feedback

@@ -10,8 +10,15 @@ return their current value on each run. So:
 - @st.fragment marks a part of the page that reruns on its own when one of its
   widgets changes, without rerunning (or redrawing) the rest of the page.
 
+Saving: every comparison is stored on this computer (scores, measurements, the
+tips and your 👍/👎 on them) unless you switch it off in the sidebar. The
+recordings themselves are only kept if you tick the box asking for that.
+
 This file is deliberately thin: all real work happens in the musiccompare package.
 """
+
+import sqlite3
+from dataclasses import dataclass
 
 import streamlit as st
 
@@ -22,6 +29,7 @@ from musiccompare.audio.excerpt import excerpt
 from musiccompare.audio.export import to_wav_bytes
 from musiccompare.audio.loader import AudioLoadError, load_audio
 from musiccompare.audio.preprocess import normalize_peak, trim_silence
+from musiccompare.data.store import Rating, SessionStore, default_data_dir, fingerprint
 from musiccompare.features.extract import extract_features
 from musiccompare.feedback.base import FeedbackProvider
 from musiccompare.feedback.rules import RuleBasedFeedback
@@ -125,24 +133,103 @@ def certainty(confidence: float) -> str:
     return "high" if confidence >= 0.75 else "medium" if confidence >= 0.5 else "low"
 
 
-def show_feedback_item(item: FeedbackItem) -> None:
+def open_store() -> SessionStore | None:
+    """The history store, or None (with a warning) if it can't be opened."""
+    try:
+        return SessionStore(default_data_dir())
+    except (OSError, sqlite3.Error) as e:
+        st.warning(f"Your practice history can't be opened, so nothing will be saved: {e}")
+        return None
+
+
+# st.feedback("thumbs") reports 0 for 👎 and 1 for 👍; the store uses -1 / +1.
+THUMB_TO_RATING: dict[int, Rating] = {0: -1, 1: 1}
+RATING_TO_THUMB = {rating: thumb for thumb, rating in THUMB_TO_RATING.items()}
+
+
+def save_rating(store: SessionStore, session_id: str, index: int, key: str) -> None:
+    """Runs when a 👍/👎 is clicked, before the page reruns."""
+    thumb = st.session_state[key]
+    store.rate(session_id, index, None if thumb is None else THUMB_TO_RATING[thumb])
+
+
+@dataclass(frozen=True)
+class Rater:
+    """Draws the 👍/👎 widgets for the tips of one saved session."""
+
+    store: SessionStore
+    session_id: str
+    saved: dict[int, Rating]  # ratings given earlier, by tip position
+
+    def widget(self, index: int) -> None:
+        # The key combines session and position, so a rating can never land on
+        # the wrong tip, and coming back to the same take shows earlier ratings.
+        key = f"rating-{self.session_id}-{index}"
+        saved = self.saved.get(index)
+        st.feedback(
+            "thumbs",
+            key=key,
+            default=None if saved is None else RATING_TO_THUMB[saved],
+            on_change=save_rating,
+            args=(self.store, self.session_id, index, key),
+        )
+
+
+def show_feedback_item(item: FeedbackItem, index: int, rater: Rater | None) -> None:
     with st.container(border=True):
         st.markdown(f"{DIMENSION_ICONS[item.dimension]} **{item.message}**")
         st.markdown(item.tip)
         st.caption(f"{item.dimension.title()} · certainty: {certainty(item.confidence)}")
+        if rater is not None:
+            rater.widget(index)
 
 
-def show_feedback(items: list[FeedbackItem]) -> None:
-    """The most useful advice first; the rest folded away so it doesn't overwhelm."""
+def show_feedback(items: list[FeedbackItem], rater: Rater | None) -> None:
+    """The most useful advice first; the rest folded away so it doesn't overwhelm.
+
+    For a saved session, each tip gets a 👍/👎: these ratings are the labels a
+    future ML model learns from ("which tips do players find helpful?").
+    """
     if not items:
         st.success("Nothing to work on: your take matches the reference closely.")
         return
-    for item in items[:MAX_TIPS_SHOWN]:
-        show_feedback_item(item)
+    if rater is not None:
+        st.caption("Was a tip helpful? Your 👍/👎 helps improve future advice.")
+    for index, item in enumerate(items[:MAX_TIPS_SHOWN]):
+        show_feedback_item(item, index, rater)
     if len(items) > MAX_TIPS_SHOWN:
         with st.expander(f"{len(items) - MAX_TIPS_SHOWN} more"):
-            for item in items[MAX_TIPS_SHOWN:]:
-                show_feedback_item(item)
+            for index, item in enumerate(items[MAX_TIPS_SHOWN:], start=MAX_TIPS_SHOWN):
+                show_feedback_item(item, index, rater)
+
+
+def save_to_history(
+    store: SessionStore,
+    uploads: tuple[bytes, str, bytes, str],
+    recordings: tuple[tuple[AudioClip, FeatureSet], tuple[AudioClip, FeatureSet]],
+    result: ComparisonResult,
+    context: PlayerContext,
+    feedback: list[FeedbackItem],
+    keep_audio: bool,
+) -> str | None:
+    """Save this comparison (once: reruns find the same session). None if it failed."""
+    (ref_clip, ref_features), (user_clip, user_features) = recordings
+    try:
+        return store.save_session(
+            fingerprint=fingerprint(uploads[0], uploads[2], context, PROVIDER.source),
+            ref=ref_features,
+            user=user_features,
+            result=result,
+            context=context,
+            feedback=feedback,
+            feedback_source=PROVIDER.source,
+            ref_clip=ref_clip,
+            user_clip=user_clip,
+            keep_audio=keep_audio,
+        )
+    except (OSError, sqlite3.Error) as e:
+        st.warning(f"Couldn't save this session to your history: {e}")
+        return None
 
 
 @st.fragment
@@ -188,6 +275,23 @@ with st.sidebar:
         piece=st.text_input("Piece (optional)"),
     )
     st.caption("Tips are written for your instrument.")
+
+    st.header("Your history")
+    save_history = st.toggle(
+        "Save to my practice history",
+        value=True,
+        key="save_history",
+        help="Saves the scores, measurements, and tips on this computer, so you can "
+        "track your progress. Your recordings aren't saved unless you tick the box below.",
+    )
+    keep_audio = st.checkbox(
+        "Also keep copies of the recordings",
+        value=False,
+        key="keep_audio",
+        disabled=not save_history,
+        help="Lets you listen back to old takes later. Off by default: recordings are "
+        "personal and large.",
+    )
 
 col_ref, col_user = st.columns(2)
 with col_ref:
@@ -241,8 +345,18 @@ elif len(analyzed) == 2:
         value = result.scores[dimension]
         column.metric(dimension.title(), "n/a" if value is None else f"{value:.0f}/100")
 
+    feedback = PROVIDER.generate(ref_features, user_features, result, context)
+    rater = None
+    if save_history and (store := open_store()) is not None:
+        recordings = (analyzed["Reference"], analyzed["You"])
+        session_id = save_to_history(
+            store, uploads, recordings, result, context, feedback, keep_audio
+        )
+        if session_id is not None:
+            rater = Rater(store, session_id, store.ratings(session_id))
+
     st.subheader("What to work on")
-    show_feedback(PROVIDER.generate(ref_features, user_features, result, context))
+    show_feedback(feedback, rater)
 
     st.subheader("Where it differs")
     timeline, tab_charts = comparison_charts(*uploads)
