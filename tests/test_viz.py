@@ -18,6 +18,7 @@ from musiccompare.viz.comparison_plot import (
     plot_problem_timeline,
 )
 from musiccompare.viz.dynamics_plot import plot_loudness_contour
+from musiccompare.viz.history_plot import plot_score_history
 from musiccompare.viz.overview import plot_waveform, waveform_envelope
 from musiccompare.viz.pitch_plot import plot_pitch_contour
 from musiccompare.viz.spectrogram_plot import MAX_COLUMNS, mel_db, plot_spectrograms
@@ -225,3 +226,37 @@ def test_to_png_renders_a_png(make_tone) -> None:
     png = to_png(plot_loudness_contour(features, title="x"), dpi=50)
 
     assert png.startswith(b"\x89PNG")
+
+
+# --- Score history (Phase 7) -------------------------------------------------
+
+
+def test_score_history_draws_one_line_per_dimension() -> None:
+    scores = [
+        {"pitch": 60.0, "dynamics": 70.0, "tone": None},
+        {"pitch": 75.0, "dynamics": 65.0, "tone": 90.0},
+    ]
+    fig = plot_score_history(scores, ["Nov 01", "Nov 02"])
+    [ax] = fig.axes
+
+    lines = {line.get_label(): line for line in ax.get_lines()}
+    assert set(lines) == {"Pitch", "Dynamics", "Tone"}
+    np.testing.assert_array_equal(lines["Pitch"].get_ydata(), [60, 75])
+    assert np.isnan(lines["Tone"].get_ydata()[0])  # a gap, not a 0
+    assert [t.get_text() for t in ax.get_xticklabels()] == ["Nov 01", "Nov 02"]
+    assert ax.get_ylim() == (0, 105)
+
+
+def test_score_history_with_many_sessions_counts_them() -> None:
+    scores = [{"pitch": 50.0 + i, "dynamics": 70.0, "tone": 80.0} for i in range(30)]
+    fig = plot_score_history(scores, [f"day {i}" for i in range(30)])  # too many to label
+    assert fig.axes[0].get_xlabel() == "Session"
+
+
+def test_score_history_checks_labels() -> None:
+    with pytest.raises(ValueError, match="2 labels for 1 sessions"):
+        plot_score_history([{"pitch": 50.0, "dynamics": 70.0, "tone": 80.0}], ["a", "b"])
+
+
+def test_score_history_with_no_sessions_is_empty() -> None:
+    assert isinstance(plot_score_history([]), Figure)

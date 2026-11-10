@@ -66,9 +66,10 @@ Arrows only point **downward**. The UI can import analysis; analysis never impor
 ```
 MusicComparisonApp/
 ├── app/
-│   ├── streamlit_app.py          # entry point: `streamlit run app/streamlit_app.py`
-│   ├── pages/                    # extra Streamlit pages (history, settings)
-│   └── components.py             # reusable UI widgets
+│   ├── streamlit_app.py          # entry point + page router (st.navigation)
+│   ├── compare_page.py           # upload, compare, tips (with 👍/👎)
+│   ├── history_page.py           # saved sessions + score chart
+│   └── components.py             # pieces shared by the pages
 ├── src/
 │   └── musiccompare/
 │       ├── __init__.py
@@ -298,7 +299,7 @@ Each phase ends with something that **runs** and a commit to GitHub.
 - 🎓 **Learn:** the Strategy pattern, Python Protocols, turning data into human-friendly language.
 
 ### Phase 7 — Data collection (ML groundwork)
-- `data/store.py`: on each analysis, save features + comparison + feedback + `PlayerContext` (SQLite for metadata, Parquet/NPZ for arrays).
+- `data/store.py`: on each analysis, save features + comparison + feedback + `PlayerContext` (SQLite for metadata, NPZ for arrays: numpy's own format, so no new dependency).
 - Add a 👍/👎 "Was this tip helpful?" button per feedback item → **labels for training**.
 - History page: track scores over time.
 - ✅ Done when: every session is saved and you can see your progress chart.
@@ -318,6 +319,8 @@ Because of Phase 6's `FeedbackProvider` interface and Phase 7's data, each of th
 ### Phase 9 — Polish & deploy
 - Error handling (silent files, very different pieces, huge uploads), loading spinners, README with screenshots.
 - Deploy free on **Streamlit Community Cloud** (connects straight to your GitHub repo).
+  ⚠️ Its disk is wiped on every restart, so the Phase 7 history won't survive there;
+  a hosted database (or keeping history local-only) has to be decided at deploy time.
 
 ---
 
@@ -361,6 +364,9 @@ One place to tune means no "magic numbers" scattered through the code.
 3. **Repo:** private on GitHub; CI runs on GitHub Actions.
 4. **Environment:** project stays in OneDrive; venv lives at `C:\dev\venvs\music-comparison-app` via `UV_PROJECT_ENVIRONMENT`.
 5. **Formats:** librosa 1.0 decodes only via libsndfile (WAV/FLAC/OGG/MP3). M4A/AAC goes through an FFmpeg fallback.
+6. **Storage (Phase 7):** history lives in `./data/` (git-ignored; override with `MUSICCOMPARE_DATA_DIR`).
+   Saving measurements is on by default and can be switched off; keeping the recordings
+   themselves is opt-in. Re-saving the same take (Streamlit reruns) never duplicates a session.
 
 ---
 
