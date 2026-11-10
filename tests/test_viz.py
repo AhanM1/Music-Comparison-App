@@ -193,7 +193,7 @@ def test_problem_timeline_has_one_bar_per_region(make_melody) -> None:
     ax = plot_problem_timeline(result, duration_s=3.2).axes[0]
 
     assert len(ax.collections) == len(result.regions) >= 2
-    assert [t.get_text() for t in ax.get_yticklabels()] == ["Tone", "Dynamics", "Pitch"]
+    assert [t.get_text() for t in ax.get_yticklabels()] == ["Missing", "Tone", "Dynamics", "Pitch"]
     assert ax.get_xlim() == (0, 3.2)
 
 
@@ -260,3 +260,19 @@ def test_score_history_checks_labels() -> None:
 
 def test_score_history_with_no_sessions_is_empty() -> None:
     assert isinstance(plot_score_history([]), Figure)
+
+
+def test_problem_timeline_shows_missing_notes(make_melody) -> None:
+    ref_y = make_melody(TUNE)
+    user_y = ref_y.copy()
+    user_y[int(0.8 * SR) : int(2.4 * SR)] = 0  # stops for notes 3-6
+    ref, user, result = compared(ref_y, user_y)
+
+    ax = plot_problem_timeline(result, duration_s=3.2).axes[0]
+
+    assert [t.get_text() for t in ax.get_yticklabels()][0] == "Missing"
+    [bars] = [c for c in ax.collections if c.get_hatch() == "//"]
+    [bar] = bars.get_paths()  # one stretch of missing notes
+    left, right = bar.vertices[:, 0].min(), bar.vertices[:, 0].max()
+    assert left == pytest.approx(0.8, abs=0.15)
+    assert right == pytest.approx(2.4, abs=0.15)

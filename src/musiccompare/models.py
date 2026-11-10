@@ -8,7 +8,7 @@ More models (FeatureSet, ComparisonResult, ...) are added in the phase that
 first needs them; see PLAN.md section 2.4.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 import numpy as np
@@ -79,6 +79,12 @@ class FeatureSet:
 
 
 IntArray = npt.NDArray[np.intp]
+BoolArray = npt.NDArray[np.bool_]
+
+
+def no_spans() -> IntArray:
+    """An empty list of (start, stop) frame spans, shape (0, 2)."""
+    return np.empty((0, 2), dtype=np.intp)
 
 
 @dataclass(frozen=True)
@@ -88,17 +94,29 @@ class Alignment:
     ``path[i] = (ref_frame, user_frame)``: at reference frame ``ref_frame`` the
     user was at ``user_frame``. There is exactly one row per reference frame, in
     order, so ``path[:, 1]`` maps the reference timeline onto the user's.
+
+    Not everything can be matched. ``extra_user`` lists stretches of the user's
+    take with nothing like them in the reference (a count-in, a repeat, extra
+    notes), and ``skipped_ref`` stretches of the reference with nothing like
+    them in the take (skipped, or different notes). Both are (start, stop)
+    frame spans, stop exclusive: user frames and reference frames respectively.
     """
 
     path: IntArray  # shape (n_ref_frames, 2)
     cost: float  # mean chroma distance along the path: 0 = identical, ~1 = unrelated
     resolution: int  # DTW ran on frames averaged in groups of this size (1 = full)
+    extra_user: IntArray = field(default_factory=no_spans)  # shape (k, 2), user frames
+    skipped_ref: IntArray = field(default_factory=no_spans)  # shape (k, 2), reference frames
 
     def __post_init__(self) -> None:
         if self.path.ndim != 2 or self.path.shape[1] != 2:
             raise ValueError(f"path must have shape (n, 2), got {self.path.shape}")
         if np.any(np.diff(self.path, axis=0) < 0):
             raise ValueError("path must never go backwards in time")
+        for name in ("extra_user", "skipped_ref"):
+            spans = getattr(self, name)
+            if spans.ndim != 2 or spans.shape[1] != 2:
+                raise ValueError(f"{name} must have shape (k, 2), got {spans.shape}")
 
     @property
     def ref_frames(self) -> IntArray:
@@ -120,6 +138,11 @@ class FrameDifferences:
 
     Positive = the user is sharp / louder / brighter; negative = flat / quieter /
     darker. NaN = nothing to compare at that moment (a rest, or no clear pitch).
+
+    ``missing`` marks moments where the reference plays a note but the take has
+    nothing to compare it with: no clear note was heard (for longer than a
+    brief dropout), or that part of the reference was skipped. Those count as
+    0 for pitch and tone, instead of quietly being left out of the scores.
     """
 
     times: FloatArray  # reference timeline (s)
@@ -128,10 +151,11 @@ class FrameDifferences:
     tone_octaves: FloatArray  # brightness (spectral centroid) difference in octaves
     level_offset_db: float  # how much louder the user was overall (removed from dynamics_db)
     octave_shift: int  # whole octaves the user played above the reference (removed from tone)
+    missing: BoolArray  # reference notes with nothing from the user to compare them to
 
     def __post_init__(self) -> None:
         n = len(self.times)
-        for name in ("pitch_cents", "dynamics_db", "tone_octaves"):
+        for name in ("pitch_cents", "dynamics_db", "tone_octaves", "missing"):
             if len(getattr(self, name)) != n:
                 raise ValueError(f"{name} has {len(getattr(self, name))} frames, expected {n}")
 
@@ -169,6 +193,9 @@ class ComparisonResult:
     differences: FrameDifferences
     scores: dict[Dimension, float | None]  # 0-100 per dimension; None = nothing to compare
     regions: list[ProblemRegion]  # sorted by start time
+    # Share (0..1) of the reference's notes that had something from the user to
+    # compare against. 1.0 = the whole piece was played.
+    coverage: float = 1.0
 
 
 Instrument = Literal["viola", "acoustic_guitar", "electric_guitar", "other"]

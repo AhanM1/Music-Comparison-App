@@ -134,6 +134,12 @@ def test_score(errors: list[float], expected: float) -> None:
     assert score(np.array(errors), tolerance=15.0, zero_at=50.0) == pytest.approx(expected)
 
 
+def test_missed_frames_count_as_zero() -> None:
+    """Two perfect frames and two missed ones: half the piece matched."""
+    assert score(np.zeros(2), tolerance=15.0, zero_at=50.0, missed_frames=2) == 50.0
+    assert score(np.array([np.nan]), tolerance=15.0, zero_at=50.0, missed_frames=3) == 0.0
+
+
 def test_score_is_none_when_nothing_to_compare() -> None:
     assert score(np.array([np.nan, np.nan]), tolerance=15.0, zero_at=50.0) is None
 
@@ -143,7 +149,9 @@ def test_score_is_none_when_nothing_to_compare() -> None:
 
 def test_frame_differences_checks_lengths() -> None:
     with pytest.raises(ValueError, match="tone_octaves has 3 frames, expected 4"):
-        FrameDifferences(np.zeros(4), np.zeros(4), np.zeros(4), np.zeros(3), 0.0, 0)
+        FrameDifferences(
+            np.zeros(4), np.zeros(4), np.zeros(4), np.zeros(3), 0.0, 0, np.zeros(4, bool)
+        )
 
 
 # --- End to end: known mistakes ---------------------------------------------
@@ -265,3 +273,38 @@ def test_regions_are_sorted_by_time(make_melody) -> None:
     starts = [r.start_s for r in result.regions]
     assert {r.dimension for r in result.regions} >= {"pitch", "dynamics"}
     assert starts == sorted(starts)
+
+
+# --- Coverage: missing notes count against you (QA report H3) -----------------
+
+
+def test_stopping_for_half_the_piece_halves_pitch_and_tone(make_melody) -> None:
+    """Silence for six notes used to score 100: those notes were never compared."""
+    ref = make_melody(TUNE)
+    user = ref.copy()
+    user[int(3 * NOTE_S * SR) : int(9 * NOTE_S * SR)] = 0  # stops for notes 4-9
+
+    result = compare_takes(ref, user)
+
+    assert result.scores["pitch"] == pytest.approx(50, abs=8)
+    assert result.scores["tone"] == pytest.approx(50, abs=8)
+    assert result.coverage == pytest.approx(0.5, abs=0.08)
+    missing_s = result.differences.times[result.differences.missing]
+    assert missing_s.min() == pytest.approx(3 * NOTE_S, abs=0.15)
+    assert missing_s.max() == pytest.approx(9 * NOTE_S, abs=0.15)
+    # Reported once (as missing notes), not as a "43 dB softer" dynamics spot.
+    assert not [r for r in result.regions if r.start_s < 9 * NOTE_S and r.end_s > 3 * NOTE_S]
+
+
+def test_a_complete_take_has_full_coverage(make_melody) -> None:
+    result = compare_takes(make_melody(TUNE), make_melody(TUNE, durations=0.5, vibrato_cents=20))
+    assert result.coverage == 1.0
+    assert not result.differences.missing.any()
+
+
+def test_a_brief_pitch_dropout_is_not_a_missing_note(make_melody) -> None:
+    ref = make_melody(TUNE)
+    user = ref.copy()
+    gap = int(1.0 * SR)
+    user[gap : gap + int(0.15 * SR)] = 0  # 0.15 s hole: shorter than MISSING_MIN_S
+    assert compare_takes(ref, user).coverage == 1.0

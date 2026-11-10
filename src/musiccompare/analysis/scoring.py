@@ -14,7 +14,8 @@ Inside the tolerance nobody could hear the difference, so it's perfect; past
 ``zero_at`` it's clearly wrong, so being *even more* wrong costs nothing extra.
 That cap matters: one wrong note shouldn't wipe out an otherwise good take.
 The final score is the average over every moment that could be compared, so it
-reads as "how much of the piece matched".
+reads as "how much of the piece matched". Moments the player missed entirely
+(``missed_frames``) count as 0, so skipping a passage can't raise the score.
 """
 
 import numpy as np
@@ -22,10 +23,16 @@ import numpy as np
 from musiccompare.models import FloatArray
 
 
-def score(smoothed: FloatArray, tolerance: float, zero_at: float) -> float | None:
-    """0-100 for one dimension, or None when no frame could be compared (all NaN)."""
+def score(
+    smoothed: FloatArray, tolerance: float, zero_at: float, missed_frames: int = 0
+) -> float | None:
+    """0-100 for one dimension, or None when there's nothing to score.
+
+    ``smoothed`` holds the compared frames (NaN = not compared); each of the
+    ``missed_frames`` extra frames scores 0.
+    """
     values = np.abs(smoothed[~np.isnan(smoothed)])
-    if values.size == 0:
+    if values.size + missed_frames == 0:
         return None
     per_frame = np.clip((zero_at - values) / (zero_at - tolerance), 0.0, 1.0)
-    return float(100 * per_frame.mean())
+    return float(100 * per_frame.sum() / (values.size + missed_frames))

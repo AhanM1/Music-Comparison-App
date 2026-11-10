@@ -60,7 +60,9 @@ def add_session(
     )
     result = ComparisonResult(
         alignment=Alignment(path=np.stack([np.arange(N)] * 2, axis=1), cost=0.1, resolution=1),
-        differences=FrameDifferences(np.arange(N) * 0.023, zeros, zeros, zeros, 0.0, 0),
+        differences=FrameDifferences(
+            np.arange(N) * 0.023, zeros, zeros, zeros, 0.0, 0, np.zeros(N, bool)
+        ),
         scores=scores,
         regions=[],
     )

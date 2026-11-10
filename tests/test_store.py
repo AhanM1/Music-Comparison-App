@@ -205,10 +205,16 @@ def test_saved_arrays_load_back_unchanged(store: SessionStore, analysis: Analysi
         assert loaded.extractor_version == original.extractor_version
         for name in ("times", "f0_hz", "rms_db", "flatness", "mfcc", "chroma"):
             np.testing.assert_array_equal(getattr(loaded, name), getattr(original, name))
-    assert saved.alignment == replace(analysis.result.alignment, path=saved.alignment.path)
-    np.testing.assert_array_equal(saved.alignment.path, analysis.result.alignment.path)
+    alignment = analysis.result.alignment
+    assert (saved.alignment.cost, saved.alignment.resolution) == (
+        pytest.approx(alignment.cost),
+        alignment.resolution,
+    )
+    for name in ("path", "extra_user", "skipped_ref"):
+        np.testing.assert_array_equal(getattr(saved.alignment, name), getattr(alignment, name))
     diff = analysis.result.differences
     np.testing.assert_array_equal(saved.differences.pitch_cents, diff.pitch_cents)
+    np.testing.assert_array_equal(saved.differences.missing, diff.missing)
     assert saved.differences.level_offset_db == pytest.approx(diff.level_offset_db)
     assert saved.differences.octave_shift == diff.octave_shift
 
@@ -353,3 +359,21 @@ def test_a_failed_save_leaves_nothing_behind(
 def test_reopening_a_store_keeps_its_data(analysis: Analysis, tmp_path: Path) -> None:
     session_id = save(SessionStore(tmp_path), analysis)
     assert [s.id for s in SessionStore(tmp_path).history()] == [session_id]
+
+
+def test_arrays_saved_before_coverage_tracking_still_load(
+    store: SessionStore, analysis: Analysis
+) -> None:
+    """Old NPZ files have no missing/extra/skipped arrays; they load as "nothing missing"."""
+    session_id = save(store, analysis)
+    path = store.arrays_dir / f"{session_id}.npz"
+    with np.load(path) as npz:
+        old = {k: npz[k] for k in npz.files if k not in NEW_KEYS}
+    np.savez_compressed(path, **old)
+
+    saved = store.load_arrays(session_id)
+    assert not saved.differences.missing.any()
+    assert saved.alignment.extra_user.shape == saved.alignment.skipped_ref.shape == (0, 2)
+
+
+NEW_KEYS = {"diff_missing", "alignment_extra_user", "alignment_skipped_ref"}

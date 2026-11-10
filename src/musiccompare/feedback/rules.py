@@ -31,10 +31,11 @@ from musiccompare.analysis.segments import (
     FRAME_S,
     SMOOTHING_WIDTH,
     find_regions,
+    find_runs,
     median_smooth,
     severity,
 )
-from musiccompare.feedback.wording import describe, time_span
+from musiccompare.feedback.wording import describe, span_list, time_span
 from musiccompare.models import (
     ComparisonResult,
     Dimension,
@@ -42,11 +43,13 @@ from musiccompare.models import (
     FeedbackItem,
     FloatArray,
     Instrument,
+    IntArray,
     PlayerContext,
     ProblemRegion,
 )
 
-SOURCE = "rules-v1"
+# v2: missing / skipped / extra material, wrong notes, busy references.
+SOURCE = "rules-v2"
 
 Family = Literal["bowed", "guitar", "other"]
 
@@ -428,7 +431,90 @@ def noisy_tone_habit(
     )
 
 
+# --- Coverage: notes missed, skipped, or added ---------------------------------
+# These come first in importance: no tip about intonation matters if half the
+# passage wasn't played, or a count-in threw the comparison off.
+
+COVERAGE_SEVERITY = 0.8  # as bad as a clearly wrong passage
+EXTRA_IMPORTANCE = 0.2  # worth knowing and easy to fix, but not a playing mistake
+UNHEARD_CONFIDENCE = 0.7  # could also be a note too quiet or noisy to track
+
+
+def spans_s(spans: IntArray) -> list[tuple[float, float]]:
+    """(start, stop) frame spans -> (start, end) seconds."""
+    return [(float(a * FRAME_S), float(b * FRAME_S)) for a, b in spans]
+
+
+def skipped_habit(
+    ref: FeatureSet, user: FeatureSet, result: ComparisonResult, context: PlayerContext
+) -> FeedbackItem | None:
+    """Stretches of the reference with nothing like them in the take."""
+    skipped = result.alignment.skipped_ref
+    if len(skipped) == 0:
+        return None
+    share = float((skipped[:, 1] - skipped[:, 0]).sum() / ref.n_frames)
+    # Neutral wording on purpose: a wrong note that sounds like the *next*
+    # reference note makes alignment jump ahead, which looks just like a skip.
+    return FeedbackItem(
+        dimension="pitch",
+        message=f"At {span_list(spans_s(skipped))} of the reference, your take doesn't "
+        "match: it sounds like you skipped these notes or played different ones.",
+        tip="Check this passage against the score, practise it slowly, then play the "
+        "section straight through. These moments count as missed in the scores.",
+        importance=importance("pitch", COVERAGE_SEVERITY, share),
+        confidence=confidence("pitch", context),
+        source=SOURCE,
+    )
+
+
+def unheard_habit(
+    ref: FeatureSet, user: FeatureSet, result: ComparisonResult, context: PlayerContext
+) -> FeedbackItem | None:
+    """The reference plays notes, but no clear note was heard from the player."""
+    unheard = result.differences.missing.copy()
+    for start, stop in result.alignment.skipped_ref:
+        unheard[start:stop] = False  # reported by skipped_habit
+    runs = np.array(find_runs(unheard), dtype=np.intp).reshape(-1, 2)
+    if len(runs) == 0:
+        return None
+    return FeedbackItem(
+        dimension="pitch",
+        message=f"At {span_list(spans_s(runs))} the reference plays notes, but we couldn't "
+        "hear a clear note from you.",
+        tip="If you stopped or skipped here, play the passage through. If you did play "
+        "it, the notes may have been too quiet, muted, or too noisy for the app to "
+        "follow. Either way these moments count as missed in the scores.",
+        importance=importance("pitch", COVERAGE_SEVERITY, float(unheard.mean())),
+        confidence=UNHEARD_CONFIDENCE,
+        source=SOURCE,
+    )
+
+
+def extra_material_habit(
+    ref: FeatureSet, user: FeatureSet, result: ComparisonResult, context: PlayerContext
+) -> FeedbackItem | None:
+    """Parts of the take with nothing like them in the reference: never scored."""
+    extra = result.alignment.extra_user
+    if len(extra) == 0:
+        return None
+    seconds = float((extra[:, 1] - extra[:, 0]).sum() * FRAME_S)
+    return FeedbackItem(
+        dimension="pitch",
+        message=f"Your take has about {seconds:.1f} s that isn't in the reference (at "
+        f"{span_list(spans_s(extra))} of your recording): a count-in, a repeat, or "
+        "extra notes. That part isn't scored.",
+        tip="Trim your recording to the same passage as the reference, so every note "
+        "you play gets compared.",
+        importance=EXTRA_IMPORTANCE,
+        confidence=confidence("pitch", context),
+        source=SOURCE,
+    )
+
+
 HABIT_RULES: tuple[HabitRule, ...] = (
+    skipped_habit,
+    unheard_habit,
+    extra_material_habit,
     tuning_habit,
     octave_habit,
     pitch_vs_loudness_habit,

@@ -22,7 +22,7 @@ from musiccompare.feedback.rules import (
     family,
     importance,
 )
-from musiccompare.feedback.wording import describe, length_change, time_span
+from musiccompare.feedback.wording import describe, length_change, span_list, time_span
 from musiccompare.models import (
     AudioClip,
     FeedbackItem,
@@ -131,7 +131,7 @@ def test_instrument_families() -> None:
 
 def test_rule_based_feedback_fits_the_provider_socket() -> None:
     assert isinstance(RuleBasedFeedback(), FeedbackProvider)
-    assert RuleBasedFeedback.source == SOURCE == "rules-v1"
+    assert RuleBasedFeedback.source == SOURCE == "rules-v2"
 
 
 # --- Rules, end to end --------------------------------------------------------
@@ -326,3 +326,56 @@ def test_advice_is_ranked(make_melody) -> None:
     assert len(items) >= 3
     ranks = [i.rank for i in items]
     assert ranks == sorted(ranks, reverse=True)
+
+
+# --- Coverage: missing, skipped, and extra material (QA report H3/H4) ----------
+
+
+def test_span_list() -> None:
+    one, two, three = (1.2, 2.0), (4.0, 5.1), (6.0, 7.0)
+    assert span_list([one]) == "0:01.2 – 0:02.0"
+    assert span_list([one, two]) == "0:01.2 – 0:02.0 and 0:04.0 – 0:05.1"
+    assert span_list([one, two, three]) == (
+        "0:01.2 – 0:02.0 and 0:04.0 – 0:05.1 (and 1 more place)"
+    )
+    assert span_list([one] * 4).endswith("(and 2 more places)")
+
+
+def test_stopping_mid_piece_is_one_missing_notes_tip(make_melody) -> None:
+    ref = make_melody(TUNE)
+    user = ref.copy()
+    user[int(1.6 * SR) : int(3.2 * SR)] = 0  # silent for notes 5-8
+
+    items = feedback(ref, user)
+
+    top = items[0]  # missing a third of the piece outranks everything else
+    assert "couldn't hear a clear note from you" in top.message
+    assert "0:01.6" in top.message or "0:01.5" in top.message or "0:01.7" in top.message
+    assert "count as missed" in top.tip
+    assert not any("softer" in i.message for i in items)  # not also a dynamics spot
+
+
+def test_count_in_is_reported_as_extra_material(make_melody) -> None:
+    items = feedback(make_melody(TUNE), make_melody([79, 79, 79] + TUNE))
+
+    [extra] = [i for i in items if "isn't in the reference" in i.message]
+    assert "about 1.2 s" in extra.message
+    assert "isn't scored" in extra.message
+    assert "Trim" in extra.tip
+
+
+def test_playing_too_little_is_reported_as_skipped(make_melody) -> None:
+    items = feedback(make_melody(TUNE), make_melody(TUNE[:7]))
+
+    [skipped] = [i for i in items if "doesn't match" in i.message]
+    assert "skipped these notes or played different ones" in skipped.message
+    assert skipped is items[0]
+
+
+def test_a_complete_take_gets_no_coverage_tips(make_melody) -> None:
+    items = feedback(make_melody(TUNE), make_melody(TUNE, durations=0.5))
+    assert not any(
+        phrase in i.message
+        for i in items
+        for phrase in ("couldn't hear", "isn't in the reference", "doesn't match")
+    )

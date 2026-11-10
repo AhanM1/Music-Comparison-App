@@ -22,6 +22,19 @@ Two refinements on top of plain DTW:
 - Smoothing the final mapping (``config.ALIGNMENT_SMOOTHING_S``). Inside a held
   note every frame looks alike, so DTW only really knows where notes start and
   end; a moving average spreads the timing evenly across each note.
+
+What DTW can't do is leave anything out: its path must run from both starts
+to both ends. So a count-in, a repeat, or a skipped passage shows up as a long
+horizontal or vertical run, where one recording moves on while the other stays
+put. A held note makes such runs too, but there both sides sound alike (low
+cost); unmatched material sounds *different* (high cost). ``unmatched_spans``
+uses that to report those stretches instead of silently absorbing them.
+
+Known limit: because the path must end at both ends, a take that stops early
+gets its last notes matched to the reference's last notes, so the "skipped"
+stretch can be reported a little before where you actually stopped. How
+*much* was skipped is reliable; exactly where is approximate. (Open-end DTW,
+which lets the path stop early, would fix this; it's a candidate for later.)
 """
 
 import math
@@ -47,7 +60,48 @@ def align(ref: FeatureSet, user: FeatureSet, max_cells: int = config.MAX_DTW_CEL
     mean_cost = float(np.mean(grid[path[:, 0], path[:, 1]]))
     smooth_frames = round(config.ALIGNMENT_SMOOTHING_S * config.SAMPLE_RATE / config.HOP_LENGTH)
     full_path = upsample_path(path, resolution, ref.n_frames, user.n_frames, smooth_frames)
-    return Alignment(path=full_path, cost=mean_cost, resolution=resolution)
+    return Alignment(
+        path=full_path,
+        cost=mean_cost,
+        resolution=resolution,
+        # A horizontal run (the reference stays, the user moves) is user material
+        # the reference doesn't have; a vertical run is reference material skipped.
+        extra_user=unmatched_spans(path, grid, resolution, stays=0, n_frames=user.n_frames),
+        skipped_ref=unmatched_spans(path, grid, resolution, stays=1, n_frames=ref.n_frames),
+    )
+
+
+def unmatched_spans(
+    path: IntArray,
+    grid: npt.NDArray[np.float64],
+    k: int,
+    stays: int,
+    n_frames: int,
+    min_s: float = config.UNMATCHED_MIN_S,
+    min_cost: float = config.UNMATCHED_MIN_COST,
+) -> IntArray:
+    """Stretches where one recording moves on alone through material that doesn't match.
+
+    ``path`` is the coarse DTW path (``k`` frames per step) and ``stays`` the
+    column (0 = reference, 1 = user) that stands still during the run. Returns
+    (start, stop) full-resolution frame spans of the *other* recording, the one
+    that moved, for runs lasting at least ``min_s`` whose mean cost is at least
+    ``min_cost`` (a held note costs ~0; unrelated notes ~0.5-0.9).
+    """
+    moves = 1 - stays
+    min_steps = math.ceil(min_s * config.SAMPLE_RATE / config.HOP_LENGTH / k)
+    still = np.diff(path[:, stays]) == 0  # step i -> i+1 kept this column fixed
+    edges = np.diff(np.concatenate([[0], still.astype(np.int8), [0]]))
+    spans = []
+    for start, stop in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1), strict=True):
+        if stop - start < min_steps:
+            continue
+        cells = path[start : stop + 1]  # the run's steps join these path points
+        if grid[cells[:, 0], cells[:, 1]].mean() < min_cost:
+            continue  # lingering on a matching note, e.g. a longer held note
+        first, last = cells[1, moves], cells[-1, moves]  # cells[0] is still matched
+        spans.append((first * k, min((last + 1) * k, n_frames)))
+    return np.array(spans, dtype=np.intp).reshape(-1, 2)
 
 
 def cost_grid(

@@ -125,16 +125,37 @@ def plot_brightness_comparison(
     return fig
 
 
+MISSING_LANE = "Missing"
+MISSING_COLOR = "0.45"  # grey: not a mistake in one dimension, but notes not compared
+
+
 def plot_problem_timeline(result: ComparisonResult, duration_s: float) -> Figure:
-    """One lane per dimension, with a bar for every problem region (darker = more severe)."""
-    fig, ax = new_figure(height=1.8)
-    lanes = {dimension: lane for lane, dimension in enumerate(reversed(DIMENSIONS))}
+    """One lane per dimension, with a bar for every problem region (darker = more severe).
+
+    A "Missing" lane at the bottom shows where the reference plays notes that
+    the take had nothing to compare with (stopped, skipped, or unheard).
+    """
+    fig, ax = new_figure(height=2.1)
+    lanes = {MISSING_LANE: 0} | {d: lane + 1 for lane, d in enumerate(reversed(DIMENSIONS))}
     for region in result.regions:
         ax.broken_barh(
             [(region.start_s, region.duration_s)],
             (lanes[region.dimension] - 0.35, 0.7),
             color=PROBLEM_COLORS[region.dimension],
             alpha=0.3 + 0.7 * region.severity,
+        )
+    missing = result.differences.missing
+    if missing.any():
+        frame_s = config.HOP_LENGTH / config.SAMPLE_RATE
+        edges = np.diff(np.concatenate([[0], missing.astype(np.int8), [0]]))
+        starts, stops = np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)
+        times = result.differences.times
+        ax.broken_barh(
+            [(times[a], (b - a) * frame_s) for a, b in zip(starts, stops, strict=True)],
+            (-0.35, 0.7),
+            color=MISSING_COLOR,
+            hatch="//",
+            alpha=0.6,
         )
     ax.set_yticks(list(lanes.values()), [d.title() for d in lanes])
     ax.set_ylim(-0.6, len(lanes) - 0.4)

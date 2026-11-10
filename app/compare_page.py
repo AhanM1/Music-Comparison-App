@@ -327,6 +327,11 @@ elif len(analyzed) == 2:
     for column, dimension in zip(st.columns(len(DIMENSIONS)), DIMENSIONS, strict=True):
         value = result.scores[dimension]
         column.metric(dimension.title(), "n/a" if value is None else f"{value:.0f}/100")
+    if result.coverage < 0.99:
+        st.caption(
+            f"{(1 - result.coverage) * 100:.0f}% of the reference's notes had nothing "
+            "from you to compare with; they count as 0 for pitch and tone."
+        )
 
     feedback = PROVIDER.generate(ref_features, user_features, result, context)
     rater = None

@@ -52,6 +52,7 @@ from musiccompare.models import (
     Instrument,
     PlayerContext,
     SkillLevel,
+    no_spans,
 )
 
 # Bump when the tables or the NPZ layout change, so old files can be migrated.
@@ -351,6 +352,9 @@ class SessionStore:
         arrays["alignment_path"] = result.alignment.path
         arrays["alignment_cost"] = np.array(result.alignment.cost)
         arrays["alignment_resolution"] = np.array(result.alignment.resolution)
+        arrays["alignment_extra_user"] = result.alignment.extra_user
+        arrays["alignment_skipped_ref"] = result.alignment.skipped_ref
+        arrays["diff_missing"] = diff.missing
         # Write to a temporary name, then rename: a crash mid-write can never
         # leave a half-written file under the real name.
         final = self._arrays_path(session_id)
@@ -389,11 +393,16 @@ class SessionStore:
                     path=npz["alignment_path"],
                     cost=float(npz["alignment_cost"]),
                     resolution=int(npz["alignment_resolution"]),
+                    # Files saved before coverage was tracked don't have these:
+                    # read them as "nothing unmatched".
+                    extra_user=_get(npz, "alignment_extra_user", no_spans()),
+                    skipped_ref=_get(npz, "alignment_skipped_ref", no_spans()),
                 ),
                 differences=FrameDifferences(
                     **{name: npz[f"diff_{name}"] for name in DIFFERENCE_ARRAYS},
                     level_offset_db=float(npz["diff_level_offset_db"]),
                     octave_shift=int(npz["diff_octave_shift"]),
+                    missing=_get(npz, "diff_missing", np.zeros(len(npz["diff_times"]), bool)),
                 ),
             )
 
@@ -491,6 +500,11 @@ class SessionStore:
         self._arrays_path(session_id).unlink(missing_ok=True)
         for role in ("ref", "user"):
             (self.audio_dir / f"{session_id}_{role}.wav").unlink(missing_ok=True)
+
+
+def _get(npz: Any, key: str, default: np.ndarray) -> np.ndarray:
+    """An array from an NPZ file, or ``default`` if an older file doesn't have it."""
+    return npz[key] if key in npz.files else default
 
 
 def _optional_float(value: float | None) -> float | None:

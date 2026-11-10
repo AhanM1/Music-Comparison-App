@@ -193,3 +193,58 @@ def test_upsample_path_identity_at_full_resolution() -> None:
 def test_alignment_rejects_backwards_path() -> None:
     with pytest.raises(ValueError, match="backwards"):
         Alignment(path=np.array([[0, 2], [1, 1]]), cost=0.0, resolution=1)
+
+
+# --- Unmatched material (QA report H4) ----------------------------------------
+
+PLAIN = [60, 64, 67, 72, 71, 67, 65, 69, 74, 72, 67, 64]  # 12 notes, no note repeated next door
+
+
+def spans_s(spans: np.ndarray) -> list[tuple[float, float]]:
+    frame_s = config.HOP_LENGTH / config.SAMPLE_RATE
+    return [(round(a * frame_s, 1), round(b * frame_s, 1)) for a, b in spans]
+
+
+@pytest.mark.parametrize(
+    ("durations", "label"),
+    [
+        (0.4, "same tempo"),
+        (0.5, "25% slower"),
+        ([0.4] * 5 + [1.2] + [0.4] * 6, "one note held three times as long"),
+        ([0.4 * (1 + 0.08 * i) for i in range(12)], "ritardando"),
+    ],
+)
+def test_tempo_changes_and_held_notes_are_not_unmatched(
+    make_melody, durations: float | list[float], label: str
+) -> None:
+    """Lingering on a matching note is a timing difference, not extra material."""
+    alignment = align(features_of(make_melody(PLAIN)), features_of(make_melody(PLAIN, durations)))
+    assert alignment.extra_user.shape == (0, 2), label
+    assert alignment.skipped_ref.shape == (0, 2), label
+
+
+def test_count_in_is_extra_material(make_melody) -> None:
+    """Three notes that aren't in the reference, then the piece (0.4 s per note)."""
+    alignment = align(features_of(make_melody(PLAIN)), features_of(make_melody([79] * 3 + PLAIN)))
+    [(start, end)] = spans_s(alignment.extra_user)
+    assert start == pytest.approx(0.0, abs=0.15)
+    assert end == pytest.approx(1.2, abs=0.15)
+    assert alignment.skipped_ref.shape == (0, 2)
+
+
+def test_playing_the_piece_twice_is_extra_material(make_melody) -> None:
+    alignment = align(features_of(make_melody(PLAIN)), features_of(make_melody(PLAIN + PLAIN)))
+    extra_s = sum(b - a for a, b in spans_s(alignment.extra_user))
+    assert extra_s == pytest.approx(len(PLAIN) * 0.4, abs=0.3)
+
+
+def test_stopping_early_is_skipped_reference_material(make_melody) -> None:
+    """Playing only the first half: about half the reference is reported as skipped.
+
+    *Where* is less certain than *how much*: DTW must end both paths together,
+    so your last notes get matched to the reference's last notes and the skip
+    can land in the middle (see the "Known limit" in alignment.py).
+    """
+    alignment = align(features_of(make_melody(PLAIN)), features_of(make_melody(PLAIN[:6])))
+    skipped_s = sum(b - a for a, b in spans_s(alignment.skipped_ref))
+    assert skipped_s == pytest.approx(6 * 0.4, abs=0.5)

@@ -29,3 +29,13 @@ def length_change(user_s: float, ref_s: float) -> str:
     if 0.5 <= ratio <= 2:
         return f"{(ratio - 1) * 100:+.0f}% length"
     return f"{ratio:.1f}x as long" if ratio > 2 else f"{1 / ratio:.1f}x shorter"
+
+
+def span_list(spans_s: list[tuple[float, float]], shown: int = 2) -> str:
+    """e.g. "0:01.2 – 0:02.0 and 0:04.0 – 0:05.1", or "... (and 3 more places)"."""
+    parts = [time_span(start, end) for start, end in spans_s[:shown]]
+    text = " and ".join(parts)
+    hidden = len(spans_s) - shown
+    if hidden > 0:
+        text += f" (and {hidden} more place{'s' if hidden > 1 else ''})"
+    return text

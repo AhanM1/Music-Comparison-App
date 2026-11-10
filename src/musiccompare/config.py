@@ -66,6 +66,14 @@ ALIGNMENT_SMOOTHING_S: Final = 0.35
 # aren't the same piece (0 = identical, 1 = unrelated).
 ALIGNMENT_COST_WARNING: Final = 0.35
 
+# Unmatched material (a count-in, a repeat, a skipped passage) makes the DTW
+# path run straight along one recording while the other stands still. Runs at
+# least this long, whose notes differ this much (mean chroma distance), are
+# reported. On synthetic tests, lingering on a held note costs ~0 and truly
+# unmatched notes 0.48-0.92, so 0.3 separates them with margin.
+UNMATCHED_MIN_S: Final = 0.5
+UNMATCHED_MIN_COST: Final = 0.3
+
 # --- Pitch ---------------------------------------------------------------
 # Search range for the pitch tracker, as note names (librosa understands these).
 FMIN: Final = "C2"
@@ -90,6 +98,10 @@ TONE_TOLERANCE_OCTAVES: Final = 0.25  # brightness: 0.25 octave ≈ 19% brighter
 PITCH_ZERO_SCORE_CENTS: Final = 50.0  # a quarter-tone: clearly out of tune
 DYNAMICS_ZERO_SCORE_DB: Final = 12.0  # roughly two dynamic levels (e.g. mf vs pp)
 TONE_ZERO_SCORE_OCTAVES: Final = 1.0  # spectral centroid doubled or halved
+
+# A reference note with no clear note from you counts as "missing" only when
+# that lasts this long: pitch trackers drop out for a moment at note changes.
+MISSING_MIN_S: Final = 0.5
 
 MIN_REGION_SECONDS: Final = 0.25  # ignore problem regions shorter than this
 REGION_MERGE_GAP_S: Final = 0.2  # join same-direction problems closer than this

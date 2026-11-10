@@ -16,6 +16,13 @@ Each dimension is measured in a unit that matches how we hear it:
 - Tone as **brightness** in octaves: log2 of the spectral-centroid ratio.
   +0.25 means the centroid was 2^0.25 ≈ 19% higher (brighter).
 
+Coverage. Comparing "the frames where both have a pitch" would let a take
+that skips half the piece score 100: the skipped half is simply never
+compared. So reference notes with nothing from the user to compare them to
+(``FrameDifferences.missing``) count as 0 for pitch and tone, and are kept out
+of every dimension's problem regions; the feedback reports them once, as
+missing notes, instead of as a pile of "43 dB softer" spots.
+
 Known limit: alignment matches whatever *sounds* most alike, so a wrong note
 right next to a repeat of the right note (C C D played as C D D) can be
 partly "explained away" by stretching the matching notes over it.
@@ -25,17 +32,28 @@ import numpy as np
 
 from musiccompare import config
 from musiccompare.analysis.scoring import score
-from musiccompare.analysis.segments import SMOOTHING_WIDTH, find_regions, median_smooth
+from musiccompare.analysis.segments import (
+    FRAME_S,
+    SMOOTHING_WIDTH,
+    find_regions,
+    find_runs,
+    median_smooth,
+)
 from musiccompare.features.pitch import fold_octaves, hz_to_cents
 from musiccompare.models import (
     DIMENSIONS,
     Alignment,
+    BoolArray,
     ComparisonResult,
     Dimension,
     FeatureSet,
     FrameDifferences,
     ProblemRegion,
 )
+
+# Dimensions where a missing note counts as 0. Dynamics is left out: the
+# loudness of a note that wasn't played isn't a separate mistake.
+SCORED_AS_MISSED: tuple[Dimension, ...] = ("pitch", "tone")
 
 # (tolerance, difference that scores 0) per dimension.
 LIMITS: dict[Dimension, tuple[float, float]] = {
@@ -50,16 +68,22 @@ def compare(ref: FeatureSet, user: FeatureSet, alignment: Alignment) -> Comparis
     differences = frame_differences(ref, user, alignment)
     user_times = user.times[alignment.user_frames]
 
+    missing = differences.missing
+
     scores: dict[Dimension, float | None] = {}
     regions: list[ProblemRegion] = []
     for dimension in DIMENSIONS:
         smoothed = median_smooth(differences.errors(dimension), SMOOTHING_WIDTH)
+        smoothed[missing] = np.nan  # reported once, as missing notes, not per dimension
         tolerance, zero_at = LIMITS[dimension]
-        scores[dimension] = score(smoothed, tolerance, zero_at)
+        missed = int(missing.sum()) if dimension in SCORED_AS_MISSED else 0
+        scores[dimension] = score(smoothed, tolerance, zero_at, missed_frames=missed)
         regions += find_regions(dimension, differences.times, smoothed, tolerance, user_times)
 
     regions.sort(key=lambda r: r.start_s)
-    return ComparisonResult(alignment, differences, scores, regions)
+    ref_notes = int(np.isfinite(ref.f0_hz).sum())
+    coverage = 1.0 - (missing & np.isfinite(ref.f0_hz)).sum() / ref_notes if ref_notes else 1.0
+    return ComparisonResult(alignment, differences, scores, regions, coverage=float(coverage))
 
 
 def frame_differences(ref: FeatureSet, user: FeatureSet, alignment: Alignment) -> FrameDifferences:
@@ -101,4 +125,28 @@ def frame_differences(ref: FeatureSet, user: FeatureSet, alignment: Alignment) -
         tone_octaves=tone_octaves,
         level_offset_db=level_offset,
         octave_shift=octave_shift,
+        missing=missing_notes(ref, user, alignment),
     )
+
+
+def missing_notes(ref: FeatureSet, user: FeatureSet, alignment: Alignment) -> BoolArray:
+    """Reference frames playing a note that the take has nothing to compare with.
+
+    Two causes: no clear note was heard from the user (a rest where there
+    shouldn't be one, a stopped or noisy passage) for at least
+    ``config.MISSING_MIN_S``; or the alignment found that stretch of the
+    reference skipped altogether.
+    """
+    ref_note = np.isfinite(ref.f0_hz)
+    unheard = ref_note & ~np.isfinite(user.f0_hz[alignment.user_frames])
+    # Majority vote over a short window: a pitch tracker drops out for a frame
+    # or two at every note change, and that isn't a missed note.
+    unheard = median_smooth(unheard.astype(np.float64), SMOOTHING_WIDTH) > 0.5
+    missing = np.zeros(ref.n_frames, dtype=bool)
+    min_frames = round(config.MISSING_MIN_S / FRAME_S)
+    for start, stop in find_runs(unheard):
+        if stop - start >= min_frames:
+            missing[start:stop] = True
+    for start, stop in alignment.skipped_ref:
+        missing[start:stop] = True
+    return missing & ref_note
