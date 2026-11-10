@@ -23,17 +23,14 @@ import streamlit as st
 
 from components import DIMENSION_ICONS, INSTRUMENT_LABELS, STORAGE_ERRORS, open_store
 from musiccompare import config
-from musiccompare.analysis.alignment import align, is_probably_same_piece
-from musiccompare.analysis.compare import compare
+from musiccompare.analysis.alignment import is_probably_same_piece
 from musiccompare.audio.excerpt import excerpt
 from musiccompare.audio.export import to_wav_bytes
-from musiccompare.audio.loader import AudioLoadError, load_audio
-from musiccompare.audio.preprocess import normalize_peak, trim_silence
+from musiccompare.audio.loader import AudioLoadError
 from musiccompare.data.store import Rating, SessionStore, fingerprint
-from musiccompare.features.extract import extract_features
 from musiccompare.feedback.base import FeedbackProvider
 from musiccompare.feedback.rules import RuleBasedFeedback
-from musiccompare.feedback.wording import describe, time_span
+from musiccompare.feedback.wording import describe, length_change, time_span
 from musiccompare.models import (
     DIMENSIONS,
     INSTRUMENTS,
@@ -45,6 +42,7 @@ from musiccompare.models import (
     PlayerContext,
     ProblemRegion,
 )
+from musiccompare.pipeline import compare_takes, prepare
 from musiccompare.viz.alignment_plot import plot_alignment_path
 from musiccompare.viz.comparison_plot import (
     plot_brightness_comparison,
@@ -69,9 +67,8 @@ PROVIDER: FeedbackProvider = RuleBasedFeedback()
 
 @st.cache_data(show_spinner="Analyzing recording...")
 def analyze_recording(data: bytes, name: str) -> tuple[AudioClip, FeatureSet]:
-    """Load, clean, and extract features. Cached: same bytes in -> instant result."""
-    clip = normalize_peak(trim_silence(load_audio(data, name=name)))
-    return clip, extract_features(clip)
+    """Load, check, clean, and measure. Cached: same bytes in -> instant result."""
+    return prepare(data, name=name)
 
 
 @st.cache_data(show_spinner=False)
@@ -99,7 +96,7 @@ def compare_recordings(
     """Align and compare two uploads. Keyed on the raw bytes, like analyze_recording."""
     _, ref_features = analyze_recording(ref_data, ref_name)
     _, user_features = analyze_recording(user_data, user_name)
-    return compare(ref_features, user_features, align(ref_features, user_features))
+    return compare_takes(ref_features, user_features)
 
 
 @st.cache_data(show_spinner="Drawing the comparison charts...")
@@ -293,8 +290,11 @@ for label, upload, column, color in [
     with column:
         try:
             clip, features = analyze_recording(upload.getvalue(), upload.name)
-        except (AudioLoadError, ValueError) as e:
+        except AudioLoadError as e:
             st.error(f"Couldn't use {upload.name}: {e}")
+            if e.detail:
+                with st.expander("Technical details"):
+                    st.code(e.detail, language=None)
             continue
         analyzed[label] = clip, features
         # Play the trimmed clip, not the raw upload: every time shown in the app
@@ -320,7 +320,7 @@ elif len(analyzed) == 2:
     ref_s, user_s = ref_clip.duration_s, user_clip.duration_s
     st.caption(
         f"You took {user_s:.1f} s, the reference took {ref_s:.1f} s "
-        f"({(user_s / ref_s - 1) * 100:+.0f}% length)."
+        f"({length_change(user_s, ref_s)})."
     )
 
     st.subheader("Scores")

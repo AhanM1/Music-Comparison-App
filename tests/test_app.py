@@ -183,6 +183,16 @@ def test_app_reports_unreadable_upload(app: AppTest) -> None:
 
     assert not app.exception  # handled gracefully...
     assert "broken.wav" in app.error[0].value  # ...with a message naming the file
+    assert "[in#" not in app.error[0].value  # no FFmpeg internals in the message
+
+
+def test_app_rejects_a_too_short_recording(app: AppTest, make_tone, to_wav_bytes) -> None:
+    app.run()
+    app.file_uploader(key="ref").upload("click.wav", to_wav_bytes(make_tone(duration_s=0.1)))
+    app.run()
+
+    assert not app.exception
+    assert "at least 1 s" in app.error[0].value
 
 
 # --- Practice history (Phase 7) ----------------------------------------------

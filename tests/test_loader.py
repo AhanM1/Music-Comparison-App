@@ -68,6 +68,78 @@ def test_garbage_bytes_raise_audio_load_error() -> None:
         load_audio(b"this is definitely not audio")
 
 
+@requires_ffmpeg
+def test_decode_errors_keep_ffmpeg_details_out_of_the_message() -> None:
+    with pytest.raises(AudioLoadError) as info:
+        load_audio(b"this is definitely not audio", name="junk.wav")
+
+    message = str(info.value)
+    assert "junk.wav" in message
+    assert "isn't an audio format" in message
+    assert "[in#" not in message  # FFmpeg internals...
+    assert info.value.detail  # ...are kept for debugging instead
+
+
+@pytest.mark.parametrize("bad", [np.nan, np.inf])
+@pytest.mark.parametrize("sr", [config.SAMPLE_RATE, 44_100])  # with and without resampling
+def test_invalid_samples_raise_audio_load_error(
+    tmp_path: Path, make_tone, bad: float, sr: int
+) -> None:
+    """A float WAV can store NaN/infinity; that used to crash deep inside librosa."""
+    y = make_tone(sr=sr)
+    y[1000] = bad
+    path = tmp_path / "damaged.wav"
+    sf.write(path, y, sr, subtype="FLOAT")
+
+    with pytest.raises(AudioLoadError, match="damaged"):
+        load_audio(path)
+
+
+def test_too_long_raises_audio_load_error(
+    tmp_path: Path, make_tone, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(config, "MAX_DURATION_S", 2.0)
+    path = tmp_path / "long.wav"
+    sf.write(path, make_tone(duration_s=4.0), config.SAMPLE_RATE)
+
+    with pytest.raises(AudioLoadError, match="longer than"):
+        load_audio(path)
+
+
+def test_exactly_the_maximum_length_is_fine(
+    tmp_path: Path, make_tone, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(config, "MAX_DURATION_S", 2.0)
+    path = tmp_path / "ok.wav"
+    sf.write(path, make_tone(duration_s=2.0), config.SAMPLE_RATE)
+    assert load_audio(path).duration_s == pytest.approx(2.0)
+
+
+@requires_ffmpeg
+def test_ffmpeg_stops_decoding_past_the_cap(
+    stereo_wav: Path, tmp_path: Path, make_tone, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only about MAX_DURATION_S + 1 s is decoded, however long the file is."""
+    long_wav = tmp_path / "long.wav"
+    sf.write(long_wav, make_tone(duration_s=8.0), config.SAMPLE_RATE)
+    m4a = tmp_path / "long.m4a"
+    subprocess.run(
+        ["ffmpeg", "-nostdin", "-loglevel", "error", "-i", str(long_wav), str(m4a)], check=True
+    )
+    monkeypatch.setattr(config, "MAX_DURATION_S", 2.0)
+    calls: list[list[str]] = []
+    real_run = subprocess.run
+
+    def spy(cmd: list[str], **kwargs: object) -> object:
+        calls.append(cmd)
+        return real_run(cmd, **kwargs)  # type: ignore[call-overload]
+
+    monkeypatch.setattr(subprocess, "run", spy)
+    with pytest.raises(AudioLoadError, match="longer than"):
+        load_audio(m4a)
+    assert calls[0][calls[0].index("-t") + 1] == "3.0"
+
+
 def test_audio_clip_rejects_stereo() -> None:
     with pytest.raises(ValueError, match="mono"):
         AudioClip(y=np.zeros((2, 100), dtype=np.float32), sr=22_050, name="bad")

@@ -21,7 +21,7 @@ from musiccompare.feedback.rules import (
     family,
     importance,
 )
-from musiccompare.feedback.wording import describe, time_span
+from musiccompare.feedback.wording import describe, length_change, time_span
 from musiccompare.models import (
     AudioClip,
     FeedbackItem,
@@ -60,6 +60,21 @@ def region(dimension: str = "pitch", mean_error: float = 30.0) -> ProblemRegion:
 
 def test_time_span() -> None:
     assert time_span(3.2, 65.0) == "0:03.2 – 1:05.0"
+
+
+@pytest.mark.parametrize(
+    ("user_s", "ref_s", "expected"),
+    [
+        (5.0, 4.0, "+25% length"),
+        (3.0, 4.0, "-25% length"),
+        (8.0, 4.0, "+100% length"),
+        (10.5, 4.0, "2.6x as long"),
+        (1.0, 4.0, "4.0x shorter"),
+    ],
+)
+def test_length_change(user_s: float, ref_s: float, expected: str) -> None:
+    """Percentages for tempo differences, ratios once they'd become absurd."""
+    assert length_change(user_s, ref_s) == expected
 
 
 @pytest.mark.parametrize(

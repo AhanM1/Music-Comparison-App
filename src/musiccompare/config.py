@@ -20,6 +20,13 @@ HOP_LENGTH: Final = 512
 # long enough to contain several cycles of the lowest note we track (C2 ≈ 65 Hz).
 FRAME_LENGTH: Final = 2048
 
+# Usable recording length, after leading/trailing silence is trimmed.
+# Shorter than ~1 s there isn't enough audio to measure habits, align, or
+# judge tone (and the FFT windows are longer than the clip itself). Longer
+# than 5 minutes, analysis takes over half a minute per clip.
+MIN_DURATION_S: Final = 1.0
+MAX_DURATION_S: Final = 300.0
+
 # --- Dynamics ------------------------------------------------------------
 # Quietest loudness we report. Anything below is treated as silence.
 SILENCE_DB: Final = -80.0
