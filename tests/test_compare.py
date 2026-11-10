@@ -308,3 +308,32 @@ def test_a_brief_pitch_dropout_is_not_a_missing_note(make_melody) -> None:
     gap = int(1.0 * SR)
     user[gap : gap + int(0.15 * SR)] = 0  # 0.15 s hole: shorter than MISSING_MIN_S
     assert compare_takes(ref, user).coverage == 1.0
+
+
+# --- Octave shift is only trusted when the notes agree --------------------------
+
+
+def test_octave_shift_needs_most_notes_to_agree() -> None:
+    from musiccompare.analysis.compare import overall_octave_shift
+
+    assert overall_octave_shift(np.full(100, -1200.0)) == -1  # everything an octave down
+    # One octave mistake by the pitch tracker in an otherwise same-octave take:
+    assert overall_octave_shift(np.r_[np.full(90, 10.0), np.full(10, 1200.0)]) == 0
+    # Mostly not octave-related (e.g. a tracker following a drone): no shift.
+    assert overall_octave_shift(np.r_[np.full(70, -498.0), np.full(30, 1200.0)]) == 0
+    assert overall_octave_shift(np.array([np.nan])) == 0
+
+
+def test_busy_reference_is_not_compared_on_harmony_readings(make_melody) -> None:
+    """A drone under the melody: the tracker reads it, not the melody. No fake
+    octave, and no "wrong note" readings (only intonation is judged)."""
+    melody = make_melody(TUNE)
+    t = np.arange(melody.size) / SR
+    drone = 0.25 * np.sin(2 * np.pi * 110 * t) + 0.15 * np.sin(2 * np.pi * 165 * t)
+
+    result = compare_takes((melody + drone).astype(np.float32), melody)
+
+    assert result.differences.octave_shift == 0
+    cents = result.differences.pitch_cents
+    assert np.all(np.abs(cents[np.isfinite(cents)]) < config.WRONG_NOTE_CENTS)
+    assert result.scores["pitch"] == pytest.approx(100, abs=5)

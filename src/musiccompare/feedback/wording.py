@@ -1,5 +1,6 @@
 """Turn numbers into words a musician reads at a glance."""
 
+from musiccompare import config
 from musiccompare.models import ProblemRegion
 
 
@@ -12,6 +13,9 @@ def describe(region: ProblemRegion) -> str:
     """How far off, in words, e.g. "32 cents sharp" or "25% darker"."""
     e = region.mean_error
     if region.dimension == "pitch":
+        if abs(e) >= config.WRONG_NOTE_CENTS:  # a different note: say it in semitones
+            n = max(1, round(abs(e) / 100))
+            return f"about {n} semitone{'s' if n > 1 else ''} {'above' if e > 0 else 'below'}"
         return f"{abs(e):.0f} cents {'sharp' if e > 0 else 'flat'}"
     if region.dimension == "dynamics":
         return f"{abs(e):.1f} dB {'louder' if e > 0 else 'softer'}"

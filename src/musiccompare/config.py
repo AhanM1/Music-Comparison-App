@@ -106,7 +106,36 @@ MISSING_MIN_S: Final = 0.5
 MIN_REGION_SECONDS: Final = 0.25  # ignore problem regions shorter than this
 REGION_MERGE_GAP_S: Final = 0.2  # join same-direction problems closer than this
 
+# --- Recording quality (analysis/quality.py) -------------------------------
+# A recording is "busy" (accompaniment, drone, heavy reverb) when the pitch
+# tracker's median confidence is this much lower than for the other recording.
+# Synthetic tests: clean variants (hiss, vibrato, legato, plucked decay, dull
+# or overtone-rich timbre) stay within 0.04; a 2.5 s reverb drops 0.19, a
+# drone or chords ~0.9.
+BUSY_PITCH_CONFIDENCE_DROP: Final = 0.15
+# With a busy reference, every tip is this much less certain.
+BUSY_CONFIDENCE_FACTOR: Final = 0.5
+
 # --- Feedback --------------------------------------------------------------
+# A problem spot needs at least this severity (0.2 = 25% past the tolerance)
+# to get a tip of its own. Spots just past the line are listed in the
+# problem-spot table but would bury the real advice; on a perfect take
+# against a reverberant reference they were all that was found.
+MIN_TIP_SEVERITY: Final = 0.2
+
+# Pitch errors this large are a different note, not intonation: a quarter-tone
+# and a half beyond it. They get "wrong note" advice instead of "tune it".
+WRONG_NOTE_CENTS: Final = 75.0
+
+# The reference counts as tuned away from A = 440 Hz when its notes sit
+# consistently this far from equal temperament (5 cents ~ A = 441.3 Hz).
+REFERENCE_TUNING_CENTS: Final = 5.0
+
+# An octave shift ("you played an octave lower") needs at least this share of
+# the notes to be a whole number of octaves apart; otherwise a pitch tracker
+# fooled by a drone could make the whole comparison an octave off.
+OCTAVE_AGREEMENT: Final = 0.5
+
 # A whole-take habit needs at least this many frames (~1 s) of evidence.
 MIN_HABIT_FRAMES: Final = 40
 

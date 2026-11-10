@@ -27,6 +27,7 @@ from typing import Literal
 import numpy as np
 
 from musiccompare import config
+from musiccompare.analysis.quality import busy_reference
 from musiccompare.analysis.segments import (
     FRAME_S,
     SMOOTHING_WIDTH,
@@ -120,6 +121,20 @@ SPOT_TIPS: dict[tuple[Dimension, bool], dict[Family, str]] = {
     },
 }
 
+# A different note entirely, not intonation (|error| >= config.WRONG_NOTE_CENTS).
+WRONG_NOTE_TIPS: dict[Family, str] = {
+    "bowed": "Check the note and fingering against the score. If it's a shift, practise "
+    "it slowly with a guide finger, and hear the target note before you land on it.",
+    "guitar": "Check the fret and string against the score or tab, then practise the "
+    "change slowly until your hand lands there without looking.",
+    "other": "Check the note against the score, then practise the passage slowly.",
+}
+
+
+def is_wrong_note(region: ProblemRegion) -> bool:
+    return region.dimension == "pitch" and abs(region.mean_error) >= config.WRONG_NOTE_CENTS
+
+
 ELECTRIC_TONE_NOTE = (
     " On electric guitar, the pickup, tone knob, and amp change the sound far more "
     "than your hands do, so match those to the reference first."
@@ -130,12 +145,23 @@ def spot_item(
     region: ProblemRegion, context: PlayerContext, piece_s: float, aside: str = ""
 ) -> FeedbackItem:
     """Advice for one problem region; ``aside`` is added to the message, e.g. ", even ..."."""
-    tip = SPOT_TIPS[(region.dimension, region.mean_error > 0)][family(context.instrument)]
+    where = time_span(region.start_s, region.end_s)
+    if is_wrong_note(region):
+        # "200 cents sharp" + "your fingers land a little high" would be wrong
+        # advice: that's a different note, not an out-of-tune one.
+        message = (
+            f"At {where} you played {describe(region)} the reference: probably a wrong "
+            "note or a missed shift."
+        )
+        tip = WRONG_NOTE_TIPS[family(context.instrument)]
+    else:
+        message = f"At {where} you were {describe(region)}{aside}."
+        tip = SPOT_TIPS[(region.dimension, region.mean_error > 0)][family(context.instrument)]
     if region.dimension == "tone" and context.instrument == "electric_guitar":
         tip += ELECTRIC_TONE_NOTE
     return FeedbackItem(
         dimension=region.dimension,
-        message=f"At {time_span(region.start_s, region.end_s)} you were {describe(region)}{aside}.",
+        message=message,
         tip=tip,
         importance=importance(region.dimension, region.severity, region.duration_s / piece_s),
         confidence=confidence(region.dimension, context),
@@ -222,11 +248,19 @@ def tuning_habit(
         "guitar": "Retune before you play, and recheck between takes.",
         "other": "Tune carefully before you play.",
     }
-    tip = tips[family(context.instrument)] + (
-        " If you were already in tune, the recording may use a different tuning "
-        "standard (orchestras often tune to A = 442 Hz, Baroque groups to 415 Hz): "
-        "tune to the recording itself instead."
-    )
+    reference_a = reference_tuning_hz(ref)
+    if reference_a is None:
+        standard = (
+            " If you were already in tune, the recording may use a different tuning "
+            "standard (orchestras often tune to A = 442 Hz, Baroque groups to 415 Hz): "
+            "tune to the recording itself instead."
+        )
+    else:
+        standard = (
+            f" Note the reference itself is tuned to about A = {reference_a:.0f} Hz, not "
+            "440: tune to the recording (or set your tuner to that A) before you play."
+        )
+    tip = tips[family(context.instrument)] + standard
     return FeedbackItem(
         dimension="pitch",
         message=message,
@@ -235,6 +269,24 @@ def tuning_habit(
         confidence=confidence("pitch", context),
         source=SOURCE,
     )
+
+
+def reference_tuning_hz(ref: FeatureSet) -> float | None:
+    """The reference's tuning as "A = ... Hz", or None if it's close to A = 440.
+
+    Each pitched frame's distance from the nearest equal-tempered note (on the
+    A = 440 grid) is measured; a consistent offset means the whole recording
+    was tuned higher or lower. Vibrato and expressive pitch average out in the
+    median.
+    """
+    f0 = ref.f0_hz[np.isfinite(ref.f0_hz)]
+    if f0.size < config.MIN_HABIT_FRAMES:
+        return None
+    semitones = 12 * np.log2(f0 / 440.0)
+    offset_cents = float(np.median(100 * (semitones - np.round(semitones))))
+    if abs(offset_cents) < config.REFERENCE_TUNING_CENTS:
+        return None
+    return float(440.0 * 2 ** (offset_cents / 1200))
 
 
 def octave_habit(
@@ -549,8 +601,18 @@ class RuleBasedFeedback:
         if noise_gap(ref, user, result) is not None:
             regions = [r for r in regions if not explained_by_noise(r)]
 
+        # Spots barely past the tolerance stay in the problem-spot list, but
+        # don't get tips: they would bury the advice that matters.
+        regions = [r for r in regions if r.severity >= config.MIN_TIP_SEVERITY]
+
         piece_s = float(result.differences.times[-1]) + FRAME_S
         for region in regions:
             note = aside if region.dimension == "pitch" else ""
             items.append(spot_item(region, context, piece_s, note))
+        if busy_reference(ref, user):
+            # Accompaniment or reverb leaks into every measurement of the reference.
+            items = [
+                replace(item, confidence=item.confidence * config.BUSY_CONFIDENCE_FACTOR)
+                for item in items
+            ]
         return sorted(items, key=lambda item: item.rank, reverse=True)

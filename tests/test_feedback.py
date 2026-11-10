@@ -16,11 +16,13 @@ from musiccompare.feedback.rules import (
     ELECTRIC_TONE_NOTE,
     SOURCE,
     SPOT_TIPS,
+    WRONG_NOTE_TIPS,
     RuleBasedFeedback,
     explained_by_noise,
     explains_spots,
     family,
     importance,
+    reference_tuning_hz,
 )
 from musiccompare.feedback.wording import describe, length_change, span_list, time_span
 from musiccompare.models import (
@@ -379,3 +381,100 @@ def test_a_complete_take_gets_no_coverage_tips(make_melody) -> None:
         for i in items
         for phrase in ("couldn't hear", "isn't in the reference", "doesn't match")
     )
+
+
+# --- Wrong notes (QA report H5) ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (74.0, "74 cents sharp"),  # still intonation
+        (80.0, "about 1 semitone above"),
+        (200.0, "about 2 semitones above"),
+        (-485.0, "about 5 semitones below"),
+    ],
+)
+def test_describe_wrong_notes_in_semitones(error: float, expected: str) -> None:
+    assert describe(region("pitch", error)) == expected
+
+
+def test_a_wrong_note_gets_wrong_note_advice(make_melody) -> None:
+    """200 cents sharp used to get "your fingers land a little high"."""
+    tune = [60, 64, 67, 72, 71, 67, 65, 69, 74, 72, 67, 64]
+    wrong = list(tune)
+    wrong[4] += 3  # B4 -> D5: a note that appears nowhere next to it
+
+    items = feedback(make_melody(tune), make_melody(wrong))
+
+    [item] = [i for i in items if "wrong note" in i.message]
+    assert "about 3 semitones above the reference" in item.message
+    assert item.tip == WRONG_NOTE_TIPS["bowed"]
+    assert not any(SPOT_TIPS[("pitch", True)]["bowed"] == i.tip for i in items)
+
+
+# --- Marginal spots get no tips ------------------------------------------------
+
+
+def test_spots_barely_past_the_tolerance_get_no_tip(make_melody) -> None:
+    """17 cents sharp (severity 0.12) is listed as a problem spot, but no tip."""
+    cents = [0, 0, 0, 0, 17, 17, 17, 17, 0, 0, 0, 0]
+    ref_y, user_y = make_melody(TUNE), make_melody(TUNE, cents=cents)
+    ref = extract_features(AudioClip(y=ref_y, sr=SR, name="ref"))
+    user = extract_features(AudioClip(y=user_y, sr=SR, name="me"))
+    result = compare(ref, user, align(ref, user))
+
+    assert [r for r in result.regions if r.dimension == "pitch"]
+    assert all(r.severity < config.MIN_TIP_SEVERITY for r in result.regions)
+    assert RuleBasedFeedback().generate(ref, user, result, VIOLA) == []
+
+
+# --- Busy references (QA report H6) --------------------------------------------
+
+
+def test_advice_against_a_busy_reference_is_less_certain(make_melody) -> None:
+    melody = make_melody(TUNE)
+    t = np.arange(melody.size) / SR
+    drone = 0.25 * np.sin(2 * np.pi * 110 * t) + 0.15 * np.sin(2 * np.pi * 165 * t)
+    sharp = make_melody(TUNE, cents=[0, 0, 0, 0, 45, 45, 45, 45, 0, 0, 0, 0])
+
+    with_drone = feedback((melody + drone).astype(np.float32), sharp)
+    solo = feedback(melody, sharp)
+
+    assert with_drone and solo
+    top_solo = max(i.confidence for i in solo)
+    assert max(i.confidence for i in with_drone) <= top_solo * config.BUSY_CONFIDENCE_FACTOR
+
+
+def test_a_flawless_take_against_a_drone_gets_no_wrong_note_tips(make_melody) -> None:
+    """The drone a fourth below used to read as two "498 cents flat" spots."""
+    melody = make_melody(TUNE)
+    t = np.arange(melody.size) / SR
+    drone = 0.25 * np.sin(2 * np.pi * 110 * t) + 0.15 * np.sin(2 * np.pi * 165 * t)
+
+    items = feedback((melody + drone).astype(np.float32), melody)
+
+    assert not [i for i in items if i.dimension == "pitch"]
+    assert all(i.confidence <= 0.5 for i in items)
+
+
+# --- The reference's own tuning ------------------------------------------------
+
+
+def test_reference_tuning_is_reported_when_it_is_off_440(make_melody) -> None:
+    ref = extract_features(AudioClip(y=make_melody(TUNE, cents=25), sr=SR, name="ref"))
+    assert reference_tuning_hz(ref) == pytest.approx(440 * 2 ** (25 / 1200), abs=0.5)  # 446.4
+
+
+def test_reference_at_440_has_no_tuning_note(make_melody) -> None:
+    ref = extract_features(AudioClip(y=make_melody(TUNE), sr=SR, name="ref"))
+    assert reference_tuning_hz(ref) is None
+
+
+def test_tuning_tip_names_the_references_a(make_melody) -> None:
+    """A reference at A = 446 and a take at 440: the tip says what to tune to."""
+    items = feedback(make_melody(TUNE, cents=25), make_melody(TUNE))
+
+    [tuning] = [i for i in items if i.message.startswith("Your whole take")]
+    assert "25 cents flat" in tuning.message
+    assert "A = 446 Hz" in tuning.tip

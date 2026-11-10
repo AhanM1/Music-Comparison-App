@@ -31,6 +31,7 @@ partly "explained away" by stretching the matching notes over it.
 import numpy as np
 
 from musiccompare import config
+from musiccompare.analysis.quality import busy_reference
 from musiccompare.analysis.scoring import score
 from musiccompare.analysis.segments import (
     FRAME_S,
@@ -47,6 +48,7 @@ from musiccompare.models import (
     ComparisonResult,
     Dimension,
     FeatureSet,
+    FloatArray,
     FrameDifferences,
     ProblemRegion,
 )
@@ -93,11 +95,15 @@ def frame_differences(ref: FeatureSet, user: FeatureSet, alignment: Alignment) -
     # Pitch: NaN wherever either side has no pitch (hz_to_cents passes NaN through).
     raw_cents = hz_to_cents(user.f0_hz[u], ref.f0_hz)
     pitch_cents = fold_octaves(raw_cents)
-    # Whole octaves the user played above the reference overall, e.g. -1 for a
-    # guitar playing a viola line an octave down. The median ignores the pitch
-    # tracker's occasional single-note octave mistakes.
-    pitched = raw_cents[np.isfinite(raw_cents)]
-    octave_shift = round(float(np.median(pitched)) / 1200) if pitched.size else 0
+    octave_shift = overall_octave_shift(raw_cents)
+    if busy_reference(ref, user):
+        # With accompaniment under the reference, its pitch tracker may follow a
+        # bass line or a drone instead of the melody. Then its octave can't be
+        # trusted, and a "wrong note" (a semitone or more off) is more likely the
+        # tracker reading a harmony note than you: only intonation is judged.
+        octave_shift = 0
+        with np.errstate(invalid="ignore"):  # NaN compares as False
+            pitch_cents[np.abs(pitch_cents) >= config.WRONG_NOTE_CENTS] = np.nan
 
     # Dynamics: compare wherever at least one side is playing. Silence is floored
     # at SOUNDING_DB, so "you stopped while the reference kept playing" counts as
@@ -127,6 +133,27 @@ def frame_differences(ref: FeatureSet, user: FeatureSet, alignment: Alignment) -
         octave_shift=octave_shift,
         missing=missing_notes(ref, user, alignment),
     )
+
+
+def overall_octave_shift(raw_cents: FloatArray) -> int:
+    """Whole octaves the user played above the reference, e.g. -1 for a guitar
+    playing a viola line an octave down.
+
+    Only counted when most compared notes really are a whole number of octaves
+    apart (within a semitone): then the most common shift wins, ignoring the
+    pitch tracker's occasional single-note octave mistakes. When notes aren't
+    octave-related at all (a reference whose tracker follows a drone), the
+    shift stays 0 instead of making the whole comparison an octave off.
+    """
+    pitched = raw_cents[np.isfinite(raw_cents)]
+    if pitched.size == 0:
+        return 0
+    octaves = np.round(pitched / 1200)
+    near_octave = np.abs(pitched - 1200 * octaves) < 100
+    if near_octave.mean() < config.OCTAVE_AGREEMENT:
+        return 0
+    values, counts = np.unique(octaves[near_octave], return_counts=True)
+    return int(values[np.argmax(counts)])
 
 
 def missing_notes(ref: FeatureSet, user: FeatureSet, alignment: Alignment) -> BoolArray:

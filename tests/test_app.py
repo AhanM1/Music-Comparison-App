@@ -283,3 +283,22 @@ def test_app_still_works_when_history_cant_be_saved(
     assert any("history can't be opened" in w.value for w in app.warning)
     assert any("35 cents sharp" in m.value for m in app.markdown)
     assert not app.feedback
+
+
+def test_app_warns_about_a_busy_reference(app: AppTest, make_melody, to_wav_bytes) -> None:
+    import numpy as np
+
+    from musiccompare import config as cfg
+
+    notes = [60, 64, 67, 72, 71, 67, 65, 69, 74, 72]
+    melody = make_melody(notes)
+    t = np.arange(melody.size) / cfg.SAMPLE_RATE
+    drone = 0.25 * np.sin(2 * np.pi * 110 * t) + 0.15 * np.sin(2 * np.pi * 165 * t)
+    app.run()
+    reference = (melody + drone).astype(np.float32)
+    app.file_uploader(key="ref").upload("orchestra.wav", to_wav_bytes(reference), "audio/wav")
+    app.file_uploader(key="user").upload("me.wav", to_wav_bytes(melody), "audio/wav")
+    app.run()
+
+    assert not app.exception
+    assert any("accompaniment, a drone, or a lot of reverb" in w.value for w in app.warning)

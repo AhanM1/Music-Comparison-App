@@ -24,6 +24,7 @@ import streamlit as st
 from components import DIMENSION_ICONS, INSTRUMENT_LABELS, STORAGE_ERRORS, open_store
 from musiccompare import config
 from musiccompare.analysis.alignment import is_probably_same_piece
+from musiccompare.analysis.quality import busy_reference, busy_take
 from musiccompare.audio.excerpt import excerpt
 from musiccompare.audio.export import to_wav_bytes
 from musiccompare.audio.loader import AudioLoadError
@@ -316,6 +317,18 @@ elif len(analyzed) == 2:
         st.warning(
             "These recordings don't look like the same music "
             f"(match distance {result.alignment.cost:.2f}), so the comparison may not mean much."
+        )
+    if busy_reference(ref_features, user_features):
+        st.warning(
+            "The reference sounds like it has accompaniment, a drone, or a lot of reverb "
+            "(more than one note at a time). This app follows one melody line, so its pitch, "
+            "loudness, and tone readings of the reference are less reliable: treat the "
+            "tips below as rough. A solo recording of the passage works best."
+        )
+    elif busy_take(ref_features, user_features):
+        st.warning(
+            "Your recording sounds like it has a backing track or accompaniment (more than "
+            "one note at a time). Record yourself playing alone for the most accurate feedback."
         )
     ref_s, user_s = ref_clip.duration_s, user_clip.duration_s
     st.caption(
