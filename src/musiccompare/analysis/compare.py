@@ -53,6 +53,11 @@ from musiccompare.models import (
     ProblemRegion,
 )
 
+# Bump whenever a change here (or in alignment / scoring) changes the numbers,
+# so saved sessions from older code aren't mistaken for the current analysis.
+# v2: coverage (missing notes count against you), busy-reference handling.
+COMPARISON_VERSION = "2"
+
 # Dimensions where a missing note counts as 0. Dynamics is left out: the
 # loudness of a note that wasn't played isn't a separate mistake.
 SCORED_AS_MISSED: tuple[Dimension, ...] = ("pitch", "tone")

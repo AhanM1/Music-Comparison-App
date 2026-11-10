@@ -13,11 +13,16 @@ before it can produce meaningless scores and tips.
 
 from musiccompare import config
 from musiccompare.analysis.alignment import align
-from musiccompare.analysis.compare import compare
+from musiccompare.analysis.compare import COMPARISON_VERSION, compare
 from musiccompare.audio.loader import AudioLoadError, AudioSource, load_audio
 from musiccompare.audio.preprocess import normalize_peak, trim_silence
-from musiccompare.features.extract import extract_features
+from musiccompare.features.extract import EXTRACTOR_VERSION, extract_features
 from musiccompare.models import AudioClip, ComparisonResult, FeatureSet
+
+# Everything that changes the numbers an analysis produces. Saved sessions are
+# identified by their recordings *and* this, so new analysis code never shows
+# stale scores for a take you saved before an upgrade.
+ANALYSIS_VERSION = f"features-{EXTRACTOR_VERSION}/comparison-{COMPARISON_VERSION}"
 
 
 def prepare(source: AudioSource, name: str | None = None) -> tuple[AudioClip, FeatureSet]:

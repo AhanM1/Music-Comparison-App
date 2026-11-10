@@ -10,7 +10,7 @@ from collections.abc import Mapping, Sequence
 import streamlit as st
 
 from components import INSTRUMENT_LABELS, open_store
-from musiccompare.data.store import SessionSummary
+from musiccompare.data.store import SessionStore, SessionSummary
 from musiccompare.models import DIMENSIONS, Dimension
 from musiccompare.viz.history_plot import plot_score_history
 from musiccompare.viz.style import to_png
@@ -35,6 +35,14 @@ def score_text(value: float | None) -> str:
 @st.cache_data(show_spinner=False)
 def score_chart(scores: Sequence[Mapping[Dimension, float | None]], labels: list[str]) -> bytes:
     return to_png(plot_score_history(scores, labels))
+
+
+def delete_everything(store: SessionStore) -> None:
+    """Runs on click, before the page reruns. Also un-ticks the confirmation, so
+    the next deletion needs a fresh "yes" (a callback may change widget state;
+    the page script itself may not, once the widget is drawn)."""
+    store.delete_all()
+    st.session_state.confirm_delete = False
 
 
 st.title("📈 Practice history")
@@ -118,6 +126,11 @@ with st.expander("Delete history"):
         "kept recordings) from this computer. This can't be undone."
     )
     confirm = st.checkbox("Yes, delete all of my history", key="confirm_delete")
-    if st.button("Delete history", type="primary", disabled=not confirm, key="delete_all"):
-        store.delete_all()
-        st.rerun()
+    st.button(
+        "Delete history",
+        type="primary",
+        disabled=not confirm,
+        key="delete_all",
+        on_click=delete_everything,
+        args=(store,),
+    )

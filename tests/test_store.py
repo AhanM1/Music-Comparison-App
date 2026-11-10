@@ -14,8 +14,10 @@ import pytest
 
 from musiccompare import config
 from musiccompare.analysis.alignment import align
-from musiccompare.analysis.compare import compare
+from musiccompare.analysis.compare import COMPARISON_VERSION, compare
+from musiccompare.data import store as store_module
 from musiccompare.data.store import SCHEMA_VERSION, SessionStore, default_data_dir, fingerprint
+from musiccompare.features.extract import EXTRACTOR_VERSION as EXTRACTOR_VERSION
 from musiccompare.features.extract import extract_features
 from musiccompare.feedback.rules import SOURCE, RuleBasedFeedback
 from musiccompare.models import (
@@ -25,6 +27,7 @@ from musiccompare.models import (
     FeedbackItem,
     PlayerContext,
 )
+from musiccompare.pipeline import ANALYSIS_VERSION
 
 SR = config.SAMPLE_RATE
 VIOLA = PlayerContext(instrument="viola", piece="Scale")
@@ -92,28 +95,35 @@ def save(
 # --- Fingerprints ------------------------------------------------------------
 
 
-def test_fingerprint_changes_with_what_changes_the_advice() -> None:
-    base = fingerprint(b"ref", b"me", VIOLA, SOURCE)
-    assert base == fingerprint(b"ref", b"me", VIOLA, SOURCE)  # deterministic
-    assert base != fingerprint(b"ref", b"me2", VIOLA, SOURCE)
-    assert base != fingerprint(b"me", b"ref", VIOLA, SOURCE)  # order matters
-    assert base != fingerprint(b"ref", b"me", replace(VIOLA, instrument="other"), SOURCE)
-    assert base != fingerprint(b"ref", b"me", replace(VIOLA, skill_level="advanced"), SOURCE)
-    assert base != fingerprint(b"ref", b"me", VIOLA, "ml-v1")
-    # The piece is only a label: renaming it is the same analysis.
-    assert base == fingerprint(b"ref", b"me", replace(VIOLA, piece="Etude"), SOURCE)
+def test_fingerprint_is_the_recordings_and_the_analysis_version() -> None:
+    base = fingerprint(b"ref", b"me", ANALYSIS_VERSION)
+    assert base == fingerprint(b"ref", b"me", ANALYSIS_VERSION)  # deterministic
+    assert base != fingerprint(b"ref", b"me2", ANALYSIS_VERSION)
+    assert base != fingerprint(b"me", b"ref", ANALYSIS_VERSION)  # order matters
+    # New analysis code gives new numbers: a different session, never stale scores.
+    assert base != fingerprint(b"ref", b"me", ANALYSIS_VERSION + "-next")
+
+
+def test_analysis_version_names_the_feature_and_comparison_code() -> None:
+    assert EXTRACTOR_VERSION in ANALYSIS_VERSION
+    assert COMPARISON_VERSION in ANALYSIS_VERSION
 
 
 def test_fingerprint_has_no_ambiguous_seams() -> None:
     """Joining raw bytes would make ("ab", "c") and ("a", "bc") collide."""
-    assert fingerprint(b"ab", b"c", VIOLA, SOURCE) != fingerprint(b"a", b"bc", VIOLA, SOURCE)
+    assert fingerprint(b"ab", b"c", "v") != fingerprint(b"a", b"bc", "v")
 
 
-def test_default_data_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_default_data_dir_is_the_project_folder_wherever_you_start(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Starting Streamlit from another folder used to start a second, empty history."""
     monkeypatch.delenv(config.DATA_DIR_ENV, raising=False)
-    assert default_data_dir() == Path("data")
-    monkeypatch.setenv(config.DATA_DIR_ENV, str(tmp_path))
-    assert default_data_dir() == tmp_path
+    project = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    assert default_data_dir() == project / "data"
+    monkeypatch.setenv(config.DATA_DIR_ENV, str(tmp_path / "elsewhere"))
+    assert default_data_dir() == tmp_path / "elsewhere"
 
 
 # --- Saving ------------------------------------------------------------------
@@ -273,13 +283,19 @@ def test_rating_a_missing_tip_fails_loudly(store: SessionStore, analysis: Analys
 
 
 def test_rated_tips_are_training_examples(store: SessionStore, analysis: Analysis) -> None:
-    session_id = save(store, analysis)
+    when = datetime(2026, 11, 10, 18, 30, tzinfo=UTC)
+    session_id = save(store, analysis, now=when)
     store.rate(session_id, 0, 1)
 
     [example] = store.rated_tips()
     tip = analysis.feedback[0]
     assert example.session_id == session_id
+    assert example.created_at == when
     assert (example.instrument, example.skill_level) == ("viola", "intermediate")
+    assert example.piece == "Scale"
+    assert example.extractor_version == analysis.ref.extractor_version
+    assert example.scores == pytest.approx(analysis.result.scores)
+    assert example.position == 0
     assert (example.dimension, example.message, example.tip) == (
         tip.dimension,
         tip.message,
@@ -291,9 +307,11 @@ def test_rated_tips_are_training_examples(store: SessionStore, analysis: Analysi
     assert example.rating == 1
     if tip.region is None:
         assert example.region_duration_s is None
+        assert example.region_mean_error is None
         assert example.region_severity is None
     else:
         assert example.region_duration_s == pytest.approx(tip.region.duration_s)
+        assert example.region_mean_error == pytest.approx(tip.region.mean_error)
         assert example.region_severity == pytest.approx(tip.region.severity)
 
 
@@ -377,3 +395,132 @@ def test_arrays_saved_before_coverage_tracking_still_load(
 
 
 NEW_KEYS = {"diff_missing", "alignment_extra_user", "alignment_skipped_ref"}
+
+
+# --- Session identity: details change, the session stays -------------------------
+
+
+def test_changing_instrument_updates_the_session_instead_of_duplicating_it(
+    store: SessionStore, analysis: Analysis
+) -> None:
+    """Picking the right instrument after uploading used to add a second history point."""
+    first = save(store, analysis)
+    guitar = replace(VIOLA, instrument="acoustic_guitar", skill_level="advanced")
+    new_tips = [replace(t, tip=f"guitar: {t.tip}") for t in analysis.feedback]
+
+    again = save(store, replace(analysis, feedback=new_tips), context=guitar)
+
+    assert again == first
+    [session] = store.history()
+    assert (session.instrument, session.skill_level) == ("acoustic_guitar", "advanced")
+    with sqlite3.connect(store.root / "sessions.db") as db:
+        tips = [t for (t,) in db.execute("SELECT tip FROM feedback ORDER BY idx")]
+    assert tips == [t.tip for t in new_tips]
+
+
+def test_ratings_survive_a_change_only_where_the_tip_is_the_same(
+    store: SessionStore, analysis: Analysis
+) -> None:
+    habit = replace(analysis.feedback[0], message="Same habit.", tip="Same tip.", region=None)
+    spot = replace(analysis.feedback[0], message="A spot.", tip="Viola tip.")
+    session_id = save(store, replace(analysis, feedback=[habit, spot]))
+    store.rate(session_id, 0, 1)
+    store.rate(session_id, 1, -1)
+
+    guitar_spot = replace(spot, tip="Guitar tip.")
+    save(
+        store,
+        replace(analysis, feedback=[guitar_spot, habit]),  # new order, one tip changed
+        context=replace(VIOLA, instrument="electric_guitar"),
+    )
+
+    # The unchanged habit keeps its 👍 at its new position; the changed tip starts fresh.
+    assert store.ratings(session_id) == {1: 1}
+
+
+def test_unchanged_settings_keep_tips_and_ratings_untouched(
+    store: SessionStore, analysis: Analysis
+) -> None:
+    session_id = save(store, analysis)
+    store.rate(session_id, 0, 1)
+    save(store, analysis)  # a plain Streamlit rerun
+    assert store.ratings(session_id) == {0: 1}
+
+
+def test_withdrawing_consent_deletes_the_recordings(
+    store: SessionStore, analysis: Analysis
+) -> None:
+    session_id = save(store, analysis, keep_audio=True)
+    assert store.audio_paths(session_id) is not None
+
+    save(store, analysis, keep_audio=False)  # the box was unticked
+
+    assert store.audio_paths(session_id) is None
+    assert not store.history()[0].audio_saved
+
+
+# --- Concurrency (QA report M4) ------------------------------------------------
+
+
+def test_simultaneous_saves_of_one_take_make_one_session(
+    store: SessionStore, analysis: Analysis
+) -> None:
+    """Two browser tabs saving at once used to raise IntegrityError in all but one."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        ids = list(pool.map(lambda _: save(store, analysis), range(6)))
+
+    assert len(set(ids)) == 1
+    assert len(store.history()) == 1
+    assert len(list(store.arrays_dir.iterdir())) == 1  # no orphaned files
+
+
+# --- Schema versions and migrations ----------------------------------------------
+
+
+def schema_version(store: SessionStore) -> int:
+    with sqlite3.connect(store.root / "sessions.db") as db:
+        [(version,)] = db.execute("PRAGMA user_version")
+    return int(version)
+
+
+def test_a_new_store_records_its_schema_version(store: SessionStore) -> None:
+    assert schema_version(store) == SCHEMA_VERSION
+
+
+def test_a_file_from_before_versioning_is_adopted(tmp_path: Path, analysis: Analysis) -> None:
+    session_id = save(SessionStore(tmp_path), analysis)
+    with sqlite3.connect(tmp_path / "sessions.db") as db:
+        db.execute("PRAGMA user_version = 0")  # like the files Phase 7 first wrote
+
+    reopened = SessionStore(tmp_path)
+
+    assert schema_version(reopened) == SCHEMA_VERSION
+    assert [s.id for s in reopened.history()] == [session_id]
+
+
+def test_migrations_upgrade_an_older_file(
+    tmp_path: Path, analysis: Analysis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_id = save(SessionStore(tmp_path), analysis)
+    monkeypatch.setattr(store_module, "SCHEMA_VERSION", 2)
+    monkeypatch.setattr(
+        store_module, "MIGRATIONS", {2: "ALTER TABLE sessions ADD COLUMN tempo REAL;"}
+    )
+
+    reopened = SessionStore(tmp_path)
+
+    assert schema_version(reopened) == 2
+    with sqlite3.connect(tmp_path / "sessions.db") as db:
+        columns = [row[1] for row in db.execute("PRAGMA table_info(sessions)")]
+    assert "tempo" in columns
+    assert [s.id for s in reopened.history()] == [session_id]  # nothing lost
+
+
+def test_a_file_from_a_newer_app_is_refused(tmp_path: Path) -> None:
+    SessionStore(tmp_path)
+    with sqlite3.connect(tmp_path / "sessions.db") as db:
+        db.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+    with pytest.raises(sqlite3.DatabaseError, match="newer version of the app"):
+        SessionStore(tmp_path)

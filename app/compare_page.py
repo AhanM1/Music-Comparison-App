@@ -17,6 +17,7 @@ recordings themselves are only kept if you tick the box asking for that.
 This file is deliberately thin: all real work happens in the musiccompare package.
 """
 
+import hashlib
 from dataclasses import dataclass
 
 import streamlit as st
@@ -43,7 +44,7 @@ from musiccompare.models import (
     PlayerContext,
     ProblemRegion,
 )
-from musiccompare.pipeline import compare_takes, prepare
+from musiccompare.pipeline import ANALYSIS_VERSION, compare_takes, prepare
 from musiccompare.viz.alignment_plot import plot_alignment_path
 from musiccompare.viz.comparison_plot import (
     plot_brightness_comparison,
@@ -143,10 +144,13 @@ class Rater:
     session_id: str
     saved: dict[int, Rating]  # ratings given earlier, by tip position
 
-    def widget(self, index: int) -> None:
-        # The key combines session and position, so a rating can never land on
-        # the wrong tip, and coming back to the same take shows earlier ratings.
-        key = f"rating-{self.session_id}-{index}"
+    def widget(self, index: int, item: FeedbackItem) -> None:
+        # The key combines session, position, and the tip's own words. Streamlit
+        # remembers a widget's value by its key, so without the words, changing
+        # your instrument (new tips, same positions) would show an old 👍 on a
+        # different tip.
+        words = hashlib.sha256(f"{item.message}|{item.tip}".encode()).hexdigest()[:12]
+        key = f"rating-{self.session_id}-{index}-{words}"
         saved = self.saved.get(index)
         st.feedback(
             "thumbs",
@@ -163,7 +167,7 @@ def show_feedback_item(item: FeedbackItem, index: int, rater: Rater | None) -> N
         st.markdown(item.tip)
         st.caption(f"{item.dimension.title()} · certainty: {certainty(item.confidence)}")
         if rater is not None:
-            rater.widget(index)
+            rater.widget(index, item)
 
 
 def show_feedback(items: list[FeedbackItem], rater: Rater | None) -> None:
@@ -198,7 +202,7 @@ def save_to_history(
     (ref_clip, ref_features), (user_clip, user_features) = recordings
     try:
         return store.save_session(
-            fingerprint=fingerprint(uploads[0], uploads[2], context, PROVIDER.source),
+            fingerprint=fingerprint(uploads[0], uploads[2], ANALYSIS_VERSION),
             ref=ref_features,
             user=user_features,
             result=result,
@@ -313,7 +317,8 @@ elif len(analyzed) == 2:
     (ref_clip, ref_features), (user_clip, user_features) = analyzed["Reference"], analyzed["You"]
     uploads = (ref_file.getvalue(), ref_file.name, user_file.getvalue(), user_file.name)
     result = compare_recordings(*uploads)
-    if not is_probably_same_piece(result.alignment):
+    same_piece = is_probably_same_piece(result.alignment)
+    if not same_piece:
         st.warning(
             "These recordings don't look like the same music "
             f"(match distance {result.alignment.cost:.2f}), so the comparison may not mean much."
@@ -348,7 +353,11 @@ elif len(analyzed) == 2:
 
     feedback = PROVIDER.generate(ref_features, user_features, result, context)
     rater = None
-    if save_history and (store := open_store()) is not None:
+    if not same_piece:
+        # Scores and tips for two different pieces mean nothing: keep them out
+        # of the progress chart and out of the ML training data.
+        st.caption("Not saved to your history, since these don't look like the same piece.")
+    elif save_history and (store := open_store()) is not None:
         recordings = (analyzed["Reference"], analyzed["You"])
         session_id = save_to_history(
             store, uploads, recordings, result, context, feedback, keep_audio
@@ -357,7 +366,11 @@ elif len(analyzed) == 2:
             rater = Rater(store, session_id, store.ratings(session_id))
 
     st.subheader("What to work on")
-    show_feedback(feedback, rater)
+    if same_piece:
+        show_feedback(feedback, rater)
+    else:
+        with st.expander("Tips anyway (probably not meaningful for different music)"):
+            show_feedback(feedback, rater)
 
     st.subheader("Where it differs")
     timeline, tab_charts = comparison_charts(*uploads)

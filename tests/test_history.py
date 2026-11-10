@@ -178,3 +178,17 @@ def test_history_page_survives_an_unusable_data_folder(
     app = history_page()
     assert not app.exception
     assert "can't be opened" in app.warning[0].value
+
+
+def test_deleting_resets_the_confirmation(store: SessionStore) -> None:
+    """Otherwise the next deletion would need just one click."""
+    add_session(store, "a", scores(60.0))
+    app = history_page()
+    app.checkbox(key="confirm_delete").check().run()
+    app.button(key="delete_all").click().run()
+
+    add_session(store, "b", scores(70.0))
+    app.run()
+
+    assert not app.checkbox(key="confirm_delete").value
+    assert app.button(key="delete_all").disabled

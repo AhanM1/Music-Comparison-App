@@ -302,3 +302,36 @@ def test_app_warns_about_a_busy_reference(app: AppTest, make_melody, to_wav_byte
 
     assert not app.exception
     assert any("accompaniment, a drone, or a lot of reverb" in w.value for w in app.warning)
+
+
+def test_app_does_not_save_comparisons_of_different_pieces(
+    app: AppTest, make_melody, to_wav_bytes, data_dir: Path
+) -> None:
+    """They'd pollute the progress chart and the ML training data (QA report M2)."""
+    app.run()
+    ref = make_melody([60, 64, 67, 72, 67, 64])
+    other = make_melody([61, 70, 63, 66, 59, 68])
+    app.file_uploader(key="ref").upload("ref.wav", to_wav_bytes(ref), "audio/wav")
+    app.file_uploader(key="user").upload("other.wav", to_wav_bytes(other), "audio/wav")
+    app.run()
+
+    assert not app.exception
+    assert any("Not saved to your history" in c.value for c in app.caption)
+    assert not (data_dir / "sessions.db").exists() or SessionStore(data_dir).history() == []
+    assert any("Tips anyway" in e.label for e in app.expander)
+
+
+def test_app_changing_instrument_keeps_one_session_and_fresh_ratings(
+    app: AppTest, make_melody, to_wav_bytes, data_dir: Path
+) -> None:
+    app.run()
+    upload_sharp_take(app, make_melody, to_wav_bytes)
+    app.feedback[0].set_value(1).run()  # 👍 the viola tip
+
+    app.selectbox(key="instrument").set_value("acoustic_guitar").run()
+
+    assert not app.exception
+    [session] = SessionStore(data_dir).history()  # updated, not duplicated
+    assert session.instrument == "acoustic_guitar"
+    # The guitar tip is a different tip: it must not show the viola tip's 👍.
+    assert app.feedback[0].value is None
