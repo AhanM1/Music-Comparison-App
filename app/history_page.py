@@ -78,7 +78,8 @@ st.subheader("Latest session")
 latest = shown[-1]
 previous = shown[-2] if len(shown) > 1 else None
 for column, dimension in zip(st.columns(len(DIMENSIONS)), DIMENSIONS, strict=True):
-    now, before = latest.scores[dimension], previous and previous.scores[dimension]
+    now = latest.scores[dimension]
+    before = None if previous is None else previous.scores[dimension]
     change = None if now is None or before is None else f"{now - before:+.0f}"
     column.metric(dimension.title(), score_text(now), change)
 st.caption(

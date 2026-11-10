@@ -66,6 +66,21 @@ def test_time_span() -> None:
 
 
 @pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [
+        (59.96, "1:00.0"),
+        (119.97, "2:00.0"),
+        (59.94, "0:59.9"),
+        (0.0, "0:00.0"),
+        (600.04, "10:00.0"),
+    ],
+)
+def test_time_span_never_shows_60_seconds(seconds: float, expected: str) -> None:
+    """QA report L1: 59.96 s used to print as "0:60.0"."""
+    assert time_span(seconds, seconds) == f"{expected} – {expected}"
+
+
+@pytest.mark.parametrize(
     ("user_s", "ref_s", "expected"),
     [
         (5.0, 4.0, "+25% length"),

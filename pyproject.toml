@@ -69,7 +69,9 @@ exclude = ["*.md"]
 # ---------------------------------------------------------------------
 [tool.mypy]
 python_version = "3.12"
-files = ["src"]
+# The app is checked too: it's thin, but it's where uploads, storage, and
+# widgets meet, and a type slip there only shows up when someone clicks.
+files = ["src", "app"]
 strict = true
 # librosa/soundfile ship without type hints; don't fail because of them.
 ignore_missing_imports = true

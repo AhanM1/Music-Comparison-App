@@ -31,7 +31,7 @@ repos:
         types: [python]
 
       - id: mypy
-        name: mypy (type check src/)
+        name: mypy (type check src/ and app/)
         entry: uv run mypy
         language: system
         types: [python]

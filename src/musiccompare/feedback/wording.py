@@ -4,9 +4,19 @@ from musiccompare import config
 from musiccompare.models import ProblemRegion
 
 
+def clock(seconds: float) -> str:
+    """e.g. 65.04 -> "1:05.0".
+
+    Rounds to tenths *first*, then splits into minutes: splitting first turned
+    59.96 s into "0:60.0" (59.96 rounds up to 60.0 inside the seconds part).
+    """
+    minutes, tenths = divmod(round(seconds * 10), 600)
+    return f"{minutes}:{tenths / 10:04.1f}"
+
+
 def time_span(start_s: float, end_s: float) -> str:
     """e.g. 0:03.2 – 0:05.0"""
-    return " – ".join(f"{int(s // 60)}:{s % 60:04.1f}" for s in (start_s, end_s))
+    return f"{clock(start_s)} – {clock(end_s)}"
 
 
 def describe(region: ProblemRegion) -> str:
