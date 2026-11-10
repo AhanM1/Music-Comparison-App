@@ -25,7 +25,7 @@ import numpy as np
 
 from musiccompare import config
 from musiccompare.analysis.scoring import score
-from musiccompare.analysis.segments import find_regions, median_smooth
+from musiccompare.analysis.segments import SMOOTHING_WIDTH, find_regions, median_smooth
 from musiccompare.features.pitch import fold_octaves, hz_to_cents
 from musiccompare.models import (
     DIMENSIONS,
@@ -48,13 +48,12 @@ LIMITS: dict[Dimension, tuple[float, float]] = {
 def compare(ref: FeatureSet, user: FeatureSet, alignment: Alignment) -> ComparisonResult:
     """Differences, a 0-100 score per dimension, and the problem regions."""
     differences = frame_differences(ref, user, alignment)
-    width = round(config.COMPARISON_SMOOTHING_S / (config.HOP_LENGTH / config.SAMPLE_RATE))
     user_times = user.times[alignment.user_frames]
 
     scores: dict[Dimension, float | None] = {}
     regions: list[ProblemRegion] = []
     for dimension in DIMENSIONS:
-        smoothed = median_smooth(differences.errors(dimension), width)
+        smoothed = median_smooth(differences.errors(dimension), SMOOTHING_WIDTH)
         tolerance, zero_at = LIMITS[dimension]
         scores[dimension] = score(smoothed, tolerance, zero_at)
         regions += find_regions(dimension, differences.times, smoothed, tolerance, user_times)

@@ -169,3 +169,45 @@ class ComparisonResult:
     differences: FrameDifferences
     scores: dict[Dimension, float | None]  # 0-100 per dimension; None = nothing to compare
     regions: list[ProblemRegion]  # sorted by start time
+
+
+Instrument = Literal["viola", "acoustic_guitar", "electric_guitar", "other"]
+INSTRUMENTS: tuple[Instrument, ...] = ("viola", "acoustic_guitar", "electric_guitar", "other")
+SkillLevel = Literal["beginner", "intermediate", "advanced"]
+SKILL_LEVELS: tuple[SkillLevel, ...] = ("beginner", "intermediate", "advanced")
+
+
+@dataclass(frozen=True)
+class PlayerContext:
+    """Who is playing what. Rules use the instrument to pick tips.
+
+    Skill level and piece barely matter to the rules yet, but a future ML model
+    will want them, and they can't be collected after the fact.
+    """
+
+    instrument: Instrument = "other"
+    skill_level: SkillLevel = "intermediate"
+    piece: str = ""
+
+
+@dataclass(frozen=True)
+class FeedbackItem:
+    """One piece of advice: what happened, and what to try."""
+
+    dimension: Dimension
+    message: str  # what we measured, e.g. "At 0:01.6 – 0:03.2 you were 35 cents sharp."
+    tip: str  # what to try, e.g. "Practise this passage slowly against a drone..."
+    importance: float  # 0..1: how much fixing this would improve the take
+    confidence: float  # 0..1: how sure we are that the measurement is right
+    source: str  # which provider wrote it, e.g. "rules-v1" (later "ml-v1")
+    region: ProblemRegion | None = None  # None = a habit across the whole take
+
+    def __post_init__(self) -> None:
+        for name in ("importance", "confidence"):
+            if not 0.0 <= getattr(self, name) <= 1.0:
+                raise ValueError(f"{name} must be in 0..1, got {getattr(self, name)}")
+
+    @property
+    def rank(self) -> float:
+        """Sort key: worth fixing *and* likely real comes first."""
+        return self.importance * self.confidence

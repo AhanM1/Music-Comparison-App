@@ -79,6 +79,44 @@ TONE_ZERO_SCORE_OCTAVES: Final = 1.0  # spectral centroid doubled or halved
 MIN_REGION_SECONDS: Final = 0.25  # ignore problem regions shorter than this
 REGION_MERGE_GAP_S: Final = 0.2  # join same-direction problems closer than this
 
+# --- Feedback --------------------------------------------------------------
+# A whole-take habit needs at least this many frames (~1 s) of evidence.
+MIN_HABIT_FRAMES: Final = 40
+
+# "Out of tune throughout" needs this share of the pitched frames off in the
+# same direction (by more than half the tolerance), so one bad passage
+# doesn't get reported as a tuning problem.
+TUNING_HABIT_FRACTION: Final = 0.75
+
+# "Pitch changes with loudness" compares your loudest third of notes with
+# your softest third, but only when those are at least this many dB apart.
+LOUD_SOFT_MIN_SPREAD_DB: Final = 6.0
+
+# Dynamic range = loudness percentile 90 minus percentile 10 (the extremes,
+# ignoring the odd spike), over the frames where you're playing.
+DYNAMIC_RANGE_PERCENTILES: Final = (10.0, 90.0)
+
+# Spectral flatness spans orders of magnitude (each 10 dB more noise is ~10x
+# flatter), so it's compared in dB. Clean synthetic audio reaches -100 dB,
+# which no real recording does, so values are floored here: below it, the
+# noise is far too quiet to hear.
+FLATNESS_FLOOR_DB: Final = -40.0
+NOISE_TOLERANCE_DB: Final = 10.0  # this much noisier than the reference is flagged
+
+# How much each dimension counts when ranking advice: wrong notes stand out
+# most, and the tone measurement is the least reliable of the three.
+DIMENSION_WEIGHTS: Final = {"pitch": 1.0, "dynamics": 0.8, "tone": 0.6}
+# How sure we are a measurement is real (1 = certain).
+DIMENSION_CONFIDENCE: Final = {"pitch": 0.9, "dynamics": 0.8, "tone": 0.6}
+# Pickups, tone knobs, and amps change an electric guitar's brightness far more
+# than playing does, so tone advice for it is much less certain.
+ELECTRIC_TONE_CONFIDENCE: Final = 0.3
+# Commercial recordings are usually compressed (their dynamics squeezed), so
+# "your dynamics are wider than the reference" is often the mastering, not you.
+DYNAMICS_WIDER_CONFIDENCE: Final = 0.4
+# A noisy room or microphone looks exactly like a noisy tone.
+NOISE_CONFIDENCE: Final = 0.5
+
 # --- Playback --------------------------------------------------------------
 # Extra audio (s) played before and after a problem spot, so your ear hears
 # it in context instead of starting mid-note.

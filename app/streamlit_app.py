@@ -23,7 +23,20 @@ from musiccompare.audio.export import to_wav_bytes
 from musiccompare.audio.loader import AudioLoadError, load_audio
 from musiccompare.audio.preprocess import normalize_peak, trim_silence
 from musiccompare.features.extract import extract_features
-from musiccompare.models import DIMENSIONS, AudioClip, ComparisonResult, FeatureSet, ProblemRegion
+from musiccompare.feedback.base import FeedbackProvider
+from musiccompare.feedback.rules import RuleBasedFeedback
+from musiccompare.feedback.wording import describe, time_span
+from musiccompare.models import (
+    DIMENSIONS,
+    INSTRUMENTS,
+    SKILL_LEVELS,
+    AudioClip,
+    ComparisonResult,
+    FeatureSet,
+    FeedbackItem,
+    PlayerContext,
+    ProblemRegion,
+)
 from musiccompare.viz.alignment_plot import plot_alignment_path
 from musiccompare.viz.comparison_plot import (
     plot_brightness_comparison,
@@ -39,6 +52,18 @@ from musiccompare.viz.style import REF_COLOR, USER_COLOR, to_png
 
 AUDIO_TYPES = ["wav", "mp3", "flac", "ogg", "m4a"]
 COMPARISON_TABS = ["Pitch", "Loudness", "Brightness", "Spectrograms", "Alignment"]
+INSTRUMENT_LABELS = {
+    "viola": "Viola",
+    "acoustic_guitar": "Acoustic guitar",
+    "electric_guitar": "Electric guitar",
+    "other": "Other",
+}
+DIMENSION_ICONS = {"pitch": "🎯", "dynamics": "🔊", "tone": "🎨"}
+MAX_TIPS_SHOWN = 5
+
+# The feedback "socket": swap in any other FeedbackProvider (e.g. an ML model
+# in Phase 8) here, and nothing else in the app changes.
+PROVIDER: FeedbackProvider = RuleBasedFeedback()
 
 
 @st.cache_data(show_spinner="Analyzing recording...")
@@ -95,20 +120,29 @@ def comparison_charts(
     return timeline, [to_png(fig) for fig in tabs]
 
 
-def time_span(start_s: float, end_s: float) -> str:
-    """e.g. 0:03.2 – 0:05.0"""
-    return " – ".join(f"{int(s // 60)}:{s % 60:04.1f}" for s in (start_s, end_s))
+def certainty(confidence: float) -> str:
+    """Confidence as a word; a percentage would suggest more precision than we have."""
+    return "high" if confidence >= 0.75 else "medium" if confidence >= 0.5 else "low"
 
 
-def describe(region: ProblemRegion) -> str:
-    """How far off, in words, e.g. "32 cents sharp" or "25% darker"."""
-    e = region.mean_error
-    if region.dimension == "pitch":
-        return f"{abs(e):.0f} cents {'sharp' if e > 0 else 'flat'}"
-    if region.dimension == "dynamics":
-        return f"{abs(e):.1f} dB {'louder' if e > 0 else 'softer'}"
-    ratio = 2**e  # tone: octaves -> brightness ratio
-    return f"{(ratio - 1) * 100:.0f}% brighter" if e > 0 else f"{(1 - ratio) * 100:.0f}% darker"
+def show_feedback_item(item: FeedbackItem) -> None:
+    with st.container(border=True):
+        st.markdown(f"{DIMENSION_ICONS[item.dimension]} **{item.message}**")
+        st.markdown(item.tip)
+        st.caption(f"{item.dimension.title()} · certainty: {certainty(item.confidence)}")
+
+
+def show_feedback(items: list[FeedbackItem]) -> None:
+    """The most useful advice first; the rest folded away so it doesn't overwhelm."""
+    if not items:
+        st.success("Nothing to work on: your take matches the reference closely.")
+        return
+    for item in items[:MAX_TIPS_SHOWN]:
+        show_feedback_item(item)
+    if len(items) > MAX_TIPS_SHOWN:
+        with st.expander(f"{len(items) - MAX_TIPS_SHOWN} more"):
+            for item in items[MAX_TIPS_SHOWN:]:
+                show_feedback_item(item)
 
 
 @st.fragment
@@ -144,6 +178,17 @@ st.set_page_config(page_title="Music Comparison", page_icon="🎻", layout="wide
 st.title("🎻 Music Comparison")
 st.caption("Upload a reference recording and your own take of the same passage.")
 
+with st.sidebar:
+    st.header("About you")
+    context = PlayerContext(
+        instrument=st.selectbox(
+            "Instrument", INSTRUMENTS, format_func=INSTRUMENT_LABELS.__getitem__, key="instrument"
+        ),
+        skill_level=st.selectbox("Level", SKILL_LEVELS, index=1, format_func=str.title),
+        piece=st.text_input("Piece (optional)"),
+    )
+    st.caption("Tips are written for your instrument.")
+
 col_ref, col_user = st.columns(2)
 with col_ref:
     ref_file = st.file_uploader("Reference recording", type=AUDIO_TYPES, key="ref")
@@ -177,7 +222,7 @@ if ref_file is None or user_file is None:
     st.info("⬆️ Upload both recordings to continue.")
 elif len(analyzed) == 2:
     st.header("Comparison")
-    (ref_clip, _), (user_clip, _) = analyzed["Reference"], analyzed["You"]
+    (ref_clip, ref_features), (user_clip, user_features) = analyzed["Reference"], analyzed["You"]
     uploads = (ref_file.getvalue(), ref_file.name, user_file.getvalue(), user_file.name)
     result = compare_recordings(*uploads)
     if not is_probably_same_piece(result.alignment):
@@ -195,6 +240,11 @@ elif len(analyzed) == 2:
     for column, dimension in zip(st.columns(len(DIMENSIONS)), DIMENSIONS, strict=True):
         value = result.scores[dimension]
         column.metric(dimension.title(), "n/a" if value is None else f"{value:.0f}/100")
+
+    st.subheader("What to work on")
+    show_feedback(PROVIDER.generate(ref_features, user_features, result, context))
+
+    st.subheader("Where it differs")
     timeline, tab_charts = comparison_charts(*uploads)
     st.image(timeline, width="stretch")
     for tab, png in zip(st.tabs(COMPARISON_TABS), tab_charts, strict=True):

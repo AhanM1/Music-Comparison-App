@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from musiccompare.feedback.rules import SPOT_TIPS
+
 # Build the path from this file's location so tests work from any directory.
 APP = str(Path(__file__).parents[1] / "app" / "streamlit_app.py")
 TIMEOUT_S = 120  # first run imports librosa/numba, which is slow
@@ -58,7 +60,49 @@ def test_app_compares_two_takes_of_the_same_melody(app: AppTest, make_melody, to
         "Dynamics": "100/100",
         "Tone": "100/100",
     }
-    assert "No problem spots" in app.success[0].value
+    successes = [s.value for s in app.success]
+    assert any("Nothing to work on" in s for s in successes)
+    assert any("No problem spots" in s for s in successes)
+
+
+def test_app_gives_advice_for_the_chosen_instrument(
+    app: AppTest, make_melody, to_wav_bytes
+) -> None:
+    notes = [60, 64, 67, 72, 71, 67, 65, 69, 74, 72]
+    sharp = [0, 0, 0, 0, 35, 35, 35, 35, 0, 0]  # notes 5-8 (1.6 s - 3.2 s) 35 cents sharp
+    app.run()
+    app.file_uploader(key="ref").upload("ref.wav", to_wav_bytes(make_melody(notes)), "audio/wav")
+    user = make_melody(notes, cents=sharp)
+    app.file_uploader(key="user").upload("me.wav", to_wav_bytes(user), "audio/wav")
+    app.run()
+
+    def advice() -> list[str]:
+        return [m.value for m in app.markdown]
+
+    assert not app.exception
+    assert app.selectbox(key="instrument").value == "viola"
+    assert "🎯 **At 0:01.6 – 0:03.2 you were 35 cents sharp.**" in advice()
+    assert SPOT_TIPS[("pitch", True)]["bowed"] in advice()
+
+    app.selectbox(key="instrument").set_value("acoustic_guitar").run()
+
+    assert not app.exception
+    assert SPOT_TIPS[("pitch", True)]["guitar"] in advice()
+    assert SPOT_TIPS[("pitch", True)]["bowed"] not in advice()
+
+
+def test_app_folds_away_extra_advice(app: AppTest, make_melody, to_wav_bytes) -> None:
+    notes = [60, 64, 67, 72, 71, 67, 65, 69, 74, 72, 67, 64, 60, 65]
+    cents = [40, 0, -40, 0] * 3 + [40, 0]  # 7 separate sharp/flat notes
+    app.run()
+    app.file_uploader(key="ref").upload("ref.wav", to_wav_bytes(make_melody(notes)), "audio/wav")
+    user = make_melody(notes, cents=cents)
+    app.file_uploader(key="user").upload("me.wav", to_wav_bytes(user), "audio/wav")
+    app.run()
+
+    assert not app.exception
+    # 7 tips: the app shows 5 (MAX_TIPS_SHOWN) and folds the rest away.
+    assert app.expander[0].label == "2 more"
 
 
 def test_app_lists_a_sharp_passage(app: AppTest, make_melody, to_wav_bytes) -> None:

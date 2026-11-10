@@ -167,8 +167,15 @@ class FeedbackItem:
 
 ```python
 class FeedbackProvider(Protocol):
-    def generate(self, result: ComparisonResult, context: PlayerContext) -> list[FeedbackItem]: ...
+    source: str  # e.g. "rules-v1"
+    def generate(
+        self, ref: FeatureSet, user: FeatureSet, result: ComparisonResult, context: PlayerContext
+    ) -> list[FeedbackItem]: ...
 ```
+
+(Both `FeatureSet`s are passed in because some habits, like "your dynamic range is
+too narrow" or "your tone is noisier", need the raw loudness and flatness curves,
+which `ComparisonResult` doesn't carry.)
 
 - **v1:** `RuleBasedFeedback` — hand-written thresholds ("if mean cents deviation > 20 → you're sharp").
 - **Later:** `MLFeedback` — a trained model that takes the same `ComparisonResult` and returns the same `FeedbackItem`s.

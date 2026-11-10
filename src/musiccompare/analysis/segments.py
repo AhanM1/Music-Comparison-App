@@ -23,6 +23,7 @@ from musiccompare import config
 from musiccompare.models import Dimension, FloatArray, ProblemRegion
 
 FRAME_S = config.HOP_LENGTH / config.SAMPLE_RATE  # seconds between frames
+SMOOTHING_WIDTH = round(config.COMPARISON_SMOOTHING_S / FRAME_S)  # in frames
 
 
 def median_smooth(x: FloatArray, width: int) -> FloatArray:
