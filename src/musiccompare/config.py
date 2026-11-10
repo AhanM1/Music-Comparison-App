@@ -121,3 +121,12 @@ NOISE_CONFIDENCE: Final = 0.5
 # Extra audio (s) played before and after a problem spot, so your ear hears
 # it in context instead of starting mid-note.
 SNIPPET_PAD_S: Final = 0.5
+
+# --- Storage ---------------------------------------------------------------
+# Where practice sessions are saved: a SQLite database plus one NPZ file of
+# measurements per session (and, only if you opt in, the recordings).
+# Set the environment variable to store them somewhere else (tests use this
+# to write into a throwaway folder). The default is relative to the folder you
+# start the app from; /data/ is in .gitignore so it never reaches GitHub.
+DATA_DIR_ENV: Final = "MUSICCOMPARE_DATA_DIR"
+DEFAULT_DATA_DIR: Final = "data"
